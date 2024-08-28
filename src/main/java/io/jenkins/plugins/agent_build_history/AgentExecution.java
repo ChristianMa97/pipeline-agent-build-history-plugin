@@ -3,14 +3,18 @@ package io.jenkins.plugins.agent_build_history;
 import edu.umd.cs.findbugs.annotations.CheckForNull;
 import edu.umd.cs.findbugs.annotations.NonNull;
 import hudson.Util;
+import hudson.model.Job;
 import hudson.model.Run;
 import java.io.IOException;
+import java.io.Serializable;
 import java.util.Collections;
 import java.util.Date;
 import java.util.GregorianCalendar;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
+
+import jenkins.model.Jenkins;
 import org.jenkinsci.plugins.workflow.actions.ErrorAction;
 import org.jenkinsci.plugins.workflow.actions.TimingAction;
 import org.jenkinsci.plugins.workflow.flow.FlowExecution;
@@ -22,18 +26,42 @@ import org.kohsuke.accmod.Restricted;
 import org.kohsuke.accmod.restrictions.NoExternalUse;
 
 @Restricted(NoExternalUse.class)
-public class AgentExecution implements Comparable<AgentExecution> {
-
-  private final Run<?, ?> run;
+public class AgentExecution implements Comparable<AgentExecution>, Serializable {
+  private static final long serialVersionUID = 1L;
+  private final String jobName;
+  private final int buildNumber;
+  private transient Run<?, ?> run;
   private final Set<FlowNodeExecution> flowNodes = Collections.synchronizedSet(new TreeSet<>());
 
   public AgentExecution(Run<?, ?> run) {
     this.run = run;
+    jobName = run.getParent().getName();
+    buildNumber = run.getNumber();
   }
 
   @NonNull
   public Run<?, ?> getRun() {
+    // Lazy-load the Run object if it's not already loaded
+    if (run == null) {
+      run = loadRun();
+    }
     return run;
+  }
+
+  private Run<?, ?> loadRun() {
+    Job<?, ?> job = Jenkins.get().getItemByFullName(jobName, Job.class);
+    if (job != null) {
+      return job.getBuildByNumber(buildNumber);
+    }
+    return null; // Handle cases where the run cannot be found
+  }
+
+  public String getJobName() {
+    return jobName;
+  }
+
+  public int getBuildNumber() {
+    return buildNumber;
   }
 
   public void addFlowNode(FlowNode node, String nodeName) {
@@ -82,7 +110,8 @@ public class AgentExecution implements Comparable<AgentExecution> {
     return compare;
   }
 
-  public class FlowNodeExecution implements Comparable<FlowNodeExecution> {
+  public class FlowNodeExecution implements Comparable<FlowNodeExecution>, Serializable {
+    private static final long serialVersionUID = 1L;
     private final String nodeId;
     private Status status;
 
