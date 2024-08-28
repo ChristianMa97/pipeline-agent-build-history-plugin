@@ -1,0 +1,56 @@
+version: '3.8'
+
+services:
+  jenkins-master:
+    image: jenkins/jenkins:lts
+    container_name: jenkins-master
+    mem_limit: 5g
+    user: root
+    ports:
+      - "8080:8080"
+      - "50000:50000"
+      - "5005:5005"
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      - ./target/pipeline-agent-build-history.hpi:/var/jenkins_home/plugins/pipeline-agent-build-history.hpi
+      - /mnt/c/CA/Vector_Root_CA_2.0.crt:/usr/local/share/ca-certificates/Vector_Root_CA_2.0.crt
+    environment:
+      - JAVA_OPTS=-Djenkins.install.runSetupWizard=false -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005
+    entrypoint: >
+      /bin/bash -c "
+      update-ca-certificates &&
+      keytool -delete -alias vector-ca -cacerts -storepass changeit || true &&
+      keytool -importcert -noprompt -trustcacerts -alias vector-ca -file /usr/local/share/ca-certificates/Vector_Root_CA_2.0.crt -cacerts -storepass changeit &&
+      /usr/bin/tini -- /usr/local/bin/jenkins.sh
+      "
+    networks:
+      - jenkins
+
+  jenkins-agent-1:
+    image: jenkins/inbound-agent
+    container_name: jenkins-agent-1
+    mem_limit: 5g
+    environment:
+      - JENKINS_URL=http://jenkins-master:8080/
+      - JENKINS_SECRET=d1d48572f3797bc075c45fb0d772f2fe0b30b3f328ef244bb2fa28449e9ef056
+      - JENKINS_AGENT_NAME=agent-1
+    networks:
+      - jenkins
+
+  jenkins-agent-2:
+    image: jenkins/inbound-agent
+    container_name: jenkins-agent-2
+    mem_limit: 5g
+    environment:
+      - JENKINS_URL=http://jenkins-master:8080/
+      - JENKINS_SECRET=0e892b435200848218fd3964435a5dbc69f94b762743b578cfb7972ecc074308
+      - JENKINS_AGENT_NAME=agent-2
+    networks:
+      - jenkins
+
+networks:
+  jenkins:
+    driver: bridge
+
+volumes:
+  jenkins_home:
