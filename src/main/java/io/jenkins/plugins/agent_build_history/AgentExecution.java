@@ -30,13 +30,15 @@ public class AgentExecution implements Comparable<AgentExecution>, Serializable 
   private static final long serialVersionUID = 1L;
   private final String jobName;
   private final int buildNumber;
+  private final long startTimeInMillis;
   private transient Run<?, ?> run;
   private final Set<FlowNodeExecution> flowNodes = Collections.synchronizedSet(new TreeSet<>());
 
   public AgentExecution(Run<?, ?> run) {
     this.run = run;
-    jobName = run.getParent().getName();
+    jobName = run.getParent().getFullName();
     buildNumber = run.getNumber();
+    startTimeInMillis = run.getStartTimeInMillis();
   }
 
   @NonNull
@@ -62,6 +64,10 @@ public class AgentExecution implements Comparable<AgentExecution>, Serializable 
 
   public int getBuildNumber() {
     return buildNumber;
+  }
+
+  public long getStartTimeInMillis() {
+    return startTimeInMillis;
   }
 
   public void addFlowNode(FlowNode node, String nodeName) {
@@ -103,7 +109,7 @@ public class AgentExecution implements Comparable<AgentExecution>, Serializable 
    */
   @Override
   public int compareTo(AgentExecution o) {
-    int compare = Long.compare(o.run.getStartTimeInMillis(), run.getStartTimeInMillis());
+    int compare = Long.compare(o.getStartTimeInMillis(), getStartTimeInMillis());
     if (compare == 0) {
       return o.run.getFullDisplayName().compareToIgnoreCase(run.getFullDisplayName());
     }

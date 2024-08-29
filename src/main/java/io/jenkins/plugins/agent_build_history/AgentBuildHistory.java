@@ -39,17 +39,6 @@ public class AgentBuildHistory implements Action {
   private static final Logger LOGGER = Logger.getLogger(AgentBuildHistory.class.getName());
   private static final String STORAGE_DIR = "/var/jenkins_home/serialized_data";
 
-  private static final Map<String, Set<String>> agentExecutions = new HashMap<>();
-  private static final Map<String, String> agentExecutionsMap = new HashMap<>();
-
-  private static final int CACHE_SIZE = 100; // Adjust size as needed
-  private static final Map<String, AgentExecution> executionCache = Collections.synchronizedMap(new LinkedHashMap<String, AgentExecution>(CACHE_SIZE, 0.75f, true) {
-    @Override
-    protected boolean removeEldestEntry(Map.Entry<String, AgentExecution> eldest) {
-      return size() > CACHE_SIZE; // Eviction policy: remove eldest if cache is full
-    }
-  });
-
   private final Computer computer;
 
   private static boolean loaded = false;
@@ -59,49 +48,162 @@ public class AgentBuildHistory implements Action {
   static{
     File storageDir = new File(STORAGE_DIR);
     if(!storageDir.exists()){
+      LOGGER.info("Creating storage directory at " + STORAGE_DIR);
       storageDir.mkdirs();
+    }else {
+      LOGGER.info("Storage directory already exists at " + STORAGE_DIR);
     }
   }
 
-  // Serialize an AgentExecution to disk
-  private static void saveAgentExecution(String computerName, AgentExecution execution) {
-    try (ObjectOutputStream oos = new ObjectOutputStream(
-            new FileOutputStream(STORAGE_DIR + "/" + computerName + "_" + execution.getJobName() + "_" + execution.getBuildNumber() + ".ser"))) {
+  private static void appendAndIndexExecution(String nodeName, AgentExecution execution) {
+    // Append execution to node file
+    LOGGER.info("Appending execution for job: " + execution.getJobName() + ", build: " + execution.getBuildNumber() + " to node: " + nodeName);
+    File file = new File(STORAGE_DIR + "/" + nodeName + "_executions.ser");
+    try (FileOutputStream fos = new FileOutputStream(file, true); //Use AppendableObjectOutputStream if there is already data, to not rewrite Headers
+         ObjectOutputStream oos = file.exists() && file.length() > 0 ?
+                 new AppendableObjectOutputStream(fos) : new ObjectOutputStream(fos)) {
       oos.writeObject(execution);
+      LOGGER.info("Execution appended successfully.");
     } catch (IOException e) {
-      LOGGER.log(Level.WARNING, "Failed to save AgentExecution for " + computerName, e);
+      LOGGER.log(Level.WARNING, "Failed to append execution for node " + nodeName, e);
     }
+
+    // Update index for the node
+    try (BufferedWriter writer = new BufferedWriter(new FileWriter(STORAGE_DIR + "/" + nodeName + "_index.txt", true))) {
+      LOGGER.info("Updating index for node: " + nodeName);
+      writer.write(execution.getJobName() + "," + execution.getBuildNumber() + "," + execution.getStartTimeInMillis());
+      writer.newLine();
+      LOGGER.info("Index updated successfully for node: " + nodeName);
+    } catch (IOException e) {
+      LOGGER.log(Level.WARNING, "Failed to update index for node " + nodeName, e);
+    }
+  }
+
+//does not directly delete the serialized data, but marks it as deleted
+  private static void markExecutionAsDeleted(String nodeName, String jobName, int buildNumber) {
+    LOGGER.info("Marking execution as deleted for job: " + jobName + ", build: " + buildNumber + " on node: " + nodeName);
+    List<String> indexLines = readIndexFile(nodeName);
+    try (BufferedWriter writer = new BufferedWriter(new FileWriter(STORAGE_DIR + "/" + nodeName + "_index.txt"))) {
+      for (String line : indexLines) {
+        if (line.startsWith(jobName + "," + buildNumber + ",")) {
+          writer.write(line + ",DELETED"); // Mark as deleted
+        } else {
+          writer.write(line);
+        }
+        writer.newLine();
+      }
+      LOGGER.info("Execution marked as deleted for job: " + jobName + ", build: " + buildNumber + " on node: " + nodeName);
+    } catch (IOException e) {
+      LOGGER.log(Level.WARNING, "Failed to update index for node " + nodeName, e);
+    }
+  }
+  //return only non deleted executions
+  private static List<String> readIndexFile(String nodeName) {
+    List<String> indexLines = new ArrayList<>();
+    try (BufferedReader reader = new BufferedReader(new FileReader(STORAGE_DIR + "/" + nodeName + "_index.txt"))) {
+      String line;
+      while ((line = reader.readLine()) != null) {
+        if (!line.endsWith(",DELETED")) { // Skip deleted entries
+          indexLines.add(line);
+        }
+      }
+    } catch (IOException e) {
+      LOGGER.log(Level.WARNING, "Failed to read index file for node " + nodeName, e);
+    }
+    return indexLines;
   }
 
   // Deserialize an AgentExecution from disk
-  private static AgentExecution loadAgentExecution(String computerName, String jobName, int buildNumber) {
+  private static AgentExecution loadAgentExecution(String nodeName, String jobName, int buildNumber) { //TODO make a better search algorithm in this file and not from top to bottom if possible, maybe use the index file first
+    LOGGER.info("Loading execution for job: " + jobName + ", build: " + buildNumber + " from node: " + nodeName);
     try (ObjectInputStream ois = new ObjectInputStream(
-            new FileInputStream(STORAGE_DIR + "/" + computerName + "_" + jobName + "_" + buildNumber + ".ser"))) {
-      return (AgentExecution) ois.readObject();
+            new FileInputStream(STORAGE_DIR + "/" + nodeName + "_executions.ser"))) {
+      while (true) {
+        try {
+          AgentExecution execution = (AgentExecution) ois.readObject();
+          if (execution.getJobName().equals(jobName) && execution.getBuildNumber() == buildNumber) {
+            LOGGER.info("Execution found and loaded for job: " + jobName + ", build: " + buildNumber);
+            return execution;
+          }
+        } catch (EOFException eof) {
+          break; // End of file reached
+        }
+      }
     } catch (IOException | ClassNotFoundException e) {
-      LOGGER.log(Level.WARNING, "Failed to load AgentExecution for " + computerName, e);
-      return null;
+      LOGGER.log(Level.WARNING, "Failed to load execution for node " + nodeName, e);
+    }
+    LOGGER.warning("Execution not found for job: " + jobName + ", build: " + buildNumber + " on node: " + nodeName);
+    return null;
+  }
+
+  private static void rewriteExecutionFile(String nodeName) {
+    List<AgentExecution> allExecutions = new ArrayList<>();
+    List<String> indexLines = readIndexFile(nodeName);
+
+    // Read all non-deleted executions
+    for (String line : indexLines) {
+      if (!line.endsWith(",DELETED")) {
+        String[] parts = line.split(",");
+        String jobName = parts[0];
+        int buildNumber = Integer.parseInt(parts[1]);
+        AgentExecution execution = loadAgentExecution(nodeName, jobName, buildNumber);
+        if (execution != null) {
+          allExecutions.add(execution);
+        }
+      }
+    }
+
+    // Write all executions back to the file
+    try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(STORAGE_DIR + "/" + nodeName + "_executions.ser"))) {
+      for (AgentExecution execution : allExecutions) {
+        oos.writeObject(execution);
+      }
+    } catch (IOException e) {
+      LOGGER.log(Level.WARNING, "Failed to rewrite executions file for node " + nodeName, e);
+    }
+
+    // Update the index file with only non-deleted entries
+    try (BufferedWriter writer = new BufferedWriter(new FileWriter(STORAGE_DIR + "/" + nodeName + "_index.txt"))) {
+      for (AgentExecution execution : allExecutions) {
+        writer.write(execution.getJobName() + "," + execution.getBuildNumber() + "," + execution.getStartTimeInMillis());
+        writer.newLine();
+      }
+    } catch (IOException e) {
+      LOGGER.log(Level.WARNING, "Failed to update index for node " + nodeName, e);
     }
   }
 
-  // Utility method to create unique identifiers
-  private static String createExecutionIdentifier(String jobName, int buildNumber) {
-    return jobName + "_" + buildNumber;
+  private static Set<String> getAllSavedNodeNames() {
+    Set<String> nodeNames = new HashSet<>();
+
+    File storageDir = new File(STORAGE_DIR);
+    File[] files = storageDir.listFiles((dir, name) -> name.endsWith("_index.txt"));
+
+    if (files != null) {
+      for (File file : files) {
+        String fileName = file.getName();
+        // Extract the node name by removing the "_index.txt" suffix
+        String nodeName = fileName.substring(0, fileName.length() - "_index.txt".length());
+        nodeNames.add(nodeName);
+      }
+    }
+
+    return nodeNames;
   }
+
 
   @Extension
   public static class HistoryRunListener extends RunListener<Run<?, ?>> {
 
     @Override
     public void onDeleted(Run run) {
-      String identifier = createExecutionIdentifier(run.getParent().getName(), run.getNumber());
-      for (Set<String> executions : agentExecutions.values()) {
-        executions.remove(identifier);
-      }
-      agentExecutionsMap.remove(identifier);
+      String jobName = run.getParent().getFullName();
+      int buildNumber = run.getNumber();
 
-      // Remove serialized data
-      deleteSerializedExecution(run.getParent().getName(), run.getNumber());
+      Set<String> nodeNames = getAllSavedNodeNames();
+      for (String nodeName : nodeNames) {
+        markExecutionAsDeleted(nodeName, jobName, buildNumber);
+      }
     }
   }
 
@@ -111,41 +213,30 @@ public class AgentBuildHistory implements Action {
     @Override
     public void onDeleted(Item item) {
       if (item instanceof Job) {
-        String jobName = item.getFullName();
-        for (Set<String> executions : agentExecutions.values()) {
-          executions.removeIf(exec -> exec.startsWith(jobName + "_"));
-        }
-        agentExecutionsMap.keySet().removeIf(key -> key.startsWith(jobName + "_"));
+        Job<?, ?> job = (Job<?, ?>) item;
+        String jobName = job.getFullName();
 
-        // Remove all serialized executions for this job
-        deleteSerializedExecutionsForJob(jobName);
-      }
-    }
-  }
-
-  // Utility method to delete serialized execution data
-  private static void deleteSerializedExecution(String jobName, int buildNumber) {
-    String fileName = STORAGE_DIR + "/" + jobName + "_" + buildNumber + ".ser";
-    File file = new File(fileName);
-    if (file.exists()) {
-      if (!file.delete()) {
-        LOGGER.log(Level.WARNING, "Failed to delete serialized execution file: " + fileName);
-      }
-    }
-  }
-
-  // Utility method to delete all serialized executions for a job
-  private static void deleteSerializedExecutionsForJob(String jobName) {
-    File storageDir = new File(STORAGE_DIR);
-    File[] files = storageDir.listFiles((dir, name) -> name.startsWith(jobName + "_") && name.endsWith(".ser"));
-    if (files != null) {
-      for (File file : files) {
-        if (!file.delete()) {
-          LOGGER.log(Level.WARNING, "Failed to delete serialized execution file: " + file.getAbsolutePath());
+        Set<String> nodeNames = getAllSavedNodeNames();
+        for (String nodeName : nodeNames) {
+          List<String> indexLines = readIndexFile(nodeName);
+          try (BufferedWriter writer = new BufferedWriter(new FileWriter(STORAGE_DIR + "/" + nodeName + "_index.txt"))) {
+            for (String line : indexLines) {
+              if (line.startsWith(jobName + ",")) {
+                writer.write(line + ",DELETED"); // Mark as deleted
+              } else {
+                writer.write(line);
+              }
+              writer.newLine();
+            }
+            LOGGER.info("Job marked for deletion: " + jobName);
+          } catch (IOException e) {
+            LOGGER.log(Level.WARNING, "Failed to update index for node " + nodeName, e);
+          }
         }
       }
     }
   }
+
 
   @Extension
   public static class HistoryNodeListener extends NodeListener {
@@ -153,19 +244,36 @@ public class AgentBuildHistory implements Action {
     @Override
     protected void onDeleted(@NonNull Node node) {
       String nodeName = node.getNodeName();
-      Set<String> executions = agentExecutions.remove(nodeName); // Remove from memory
 
-      if (executions != null) {
-        for (String identifier : executions) {
-          String[] parts = identifier.split("_");
-          String jobName = parts[0];
-          int buildNumber = Integer.parseInt(parts[1]);
-          deleteSerializedExecution(jobName, buildNumber); // Delete serialized data
-        }
+      // Delete the index file for the node
+      File indexFile = new File(STORAGE_DIR + "/" + nodeName + "_index.txt");
+      if (indexFile.exists() && !indexFile.delete()) {
+        LOGGER.log(Level.WARNING, "Failed to delete index file for node: " + nodeName);
+      }
+
+      // Delete the serialized executions file for the node
+      File executionsFile = new File(STORAGE_DIR + "/" + nodeName + "_executions.ser");
+      if (executionsFile.exists() && !executionsFile.delete()) {
+        LOGGER.log(Level.WARNING, "Failed to delete executions file for node: " + nodeName);
       }
 
       LOGGER.log(Level.INFO, () -> "Removed all execution data for deleted node: " + nodeName);
     }
+  }
+
+  // Helper method to check if there is existing content in STORAGE_DIR
+  private boolean hasExistingContent() {
+    File storageDir = new File(STORAGE_DIR);
+    File[] files = storageDir.listFiles((dir, name) -> name.endsWith("_executions.ser") || name.endsWith("_index.txt"));
+
+    if (files != null) {
+      for (File file : files) {
+        if (file.length() > 0) { // Check if file has content
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   public AgentBuildHistory(Computer computer) {
@@ -187,11 +295,15 @@ public class AgentBuildHistory implements Action {
   @SuppressFBWarnings(value = "ST_WRITE_TO_STATIC_FROM_INSTANCE_METHOD")
   public RunListTable getHandler() {
     if (!loaded) {
-      loaded = true;
-      Timer.get().schedule(AgentBuildHistory::load, 0, TimeUnit.SECONDS);
+      if (!hasExistingContent()) {
+        loaded = true;
+        Timer.get().schedule(AgentBuildHistory::load, 0, TimeUnit.SECONDS);
+      } else {
+        loaded = true; // Mark as loaded because we found existing content
+      }
     }
     RunListTable runListTable = new RunListTable(computer.getName());
-    runListTable.setRuns(getLazyLoadedExecutions());
+    runListTable.setRuns(getExecutionsForNode(computer.getName(), 0, 100));
     return  runListTable;
   }
 
@@ -200,17 +312,17 @@ public class AgentBuildHistory implements Action {
     RunList<Run<?, ?>> runList = RunList.fromJobs((Iterable) Jenkins.get().allItems(Job.class));
     runList.forEach(run -> {
       LOGGER.info("Loading run " + run.getFullDisplayName());
-      String identifier = createExecutionIdentifier(run.getParent().getFullName(), run.getNumber());
-      AgentExecution execution = getAgentExecution(run);
+      AgentExecution execution = new AgentExecution(run);
 
       if (run instanceof AbstractBuild) {
         Node node = ((AbstractBuild<?, ?>) run).getBuiltOn();
         if (node != null) {
-          Set<String> executions = loadExecutions(node.getNodeName());
-          executions.add(identifier);
+          LOGGER.info("Loading AbstractBuild on node: " + node.getNodeName());
+          appendAndIndexExecution(node.getNodeName(), execution);
         }
       } else if (run instanceof WorkflowRun) {
         WorkflowRun wfr = (WorkflowRun) run;
+        LOGGER.info("Loading WorkflowRun: " + wfr.getFullDisplayName());
         FlowExecution flowExecution = wfr.getExecution();
         if (flowExecution != null) {
           for (FlowNode flowNode : new DepthFirstScanner().allNodes(flowExecution)) {
@@ -223,15 +335,13 @@ public class AgentBuildHistory implements Action {
               if (descriptor instanceof ExecutorStep.DescriptorImpl) {
                 String nodeName = action.getNode();
                 execution.addFlowNode(flowNode, nodeName);
-                Set<String> executions = loadExecutions(nodeName);
-                executions.add(identifier);
+                LOGGER.info("Loading WorkflowRun FlowNode on node: " + nodeName);
+                appendAndIndexExecution(nodeName, execution);
               }
             }
           }
         }
       }
-      // Serialize execution after all modifications
-      saveAgentExecution(run.getParent().getFullName(), execution);
       // Clear the run object to free memory
       run = null;
     });
@@ -239,70 +349,32 @@ public class AgentBuildHistory implements Action {
     LOGGER.log(Level.INFO, () -> "Loading all runs complete");
   }
 
-  private static Set<String> loadExecutions(String computerName) {
-    Set<String> executions = agentExecutions.get(computerName);
-    if (executions == null) {
-      LOGGER.log(Level.INFO, () -> "Creating executions for computer " + computerName);
-      executions = Collections.synchronizedSet(new TreeSet<>());
-      agentExecutions.put(computerName, executions);
-    }
-    return executions;
-  }
-
-  // Implement lazy loading for executions
-  private Iterable<AgentExecution> getLazyLoadedExecutions() {
-    Set<String> executionIdentifiers = agentExecutions.get(computer.getName());
-    return () -> new Iterator<AgentExecution>() {
-      private final Iterator<String> internalIterator = executionIdentifiers.iterator();
-
-      @Override
-      public boolean hasNext() {
-        return internalIterator.hasNext();
-      }
-
-      @Override
-      public AgentExecution next() {
-        String identifier = internalIterator.next();
-        AgentExecution execution = executionCache.get(identifier);
-
-        // If not in cache, load from disk
-        if (execution == null) {
-          String[] parts = identifier.split("_");
-          String jobName = parts[0];
-          int buildNumber = Integer.parseInt(parts[1]);
-          execution = loadAgentExecution(computer.getName(), jobName, buildNumber);
-
-          if (execution != null) {
-            executionCache.put(identifier, execution); // Cache the loaded execution
-          }
-        }
-        return execution;
-      }
-    };
-  }
-
-  /* use by jelly */
+  /* Use by jelly */
   public Set<AgentExecution> getExecutions() {
-    Set<String> executionIdentifiers = agentExecutions.get(computer.getName());
-    if (executionIdentifiers == null) {
-      return Collections.emptySet();
-    }
+    // Get the node name associated with this AgentBuildHistory instance
+    String nodeName = computer.getName();
 
-    Set<AgentExecution> executions = new TreeSet<>();
-    for (String identifier : executionIdentifiers) {
-      AgentExecution execution = executionCache.get(identifier);
-      if (execution == null) {
-        // If not in cache, load from disk
-        String[] parts = identifier.split("_");
-        String jobName = parts[0];
-        int buildNumber = Integer.parseInt(parts[1]);
-        execution = loadAgentExecution(computer.getName(), jobName, buildNumber);
+    // Read the index file for this node to get all execution entries
+    List<String> indexLines = readIndexFile(nodeName);
 
-        if (execution != null) {
-          executionCache.put(identifier, execution); // Cache the loaded execution
-          executions.add(execution);
-        }
-      } else {
+    Set<AgentExecution> executions = new TreeSet<>((exec1, exec2) -> {
+      // Sort by start time, and by full display name if start times are equal
+      int compare = Long.compare(exec1.getRun().getStartTimeInMillis(), exec2.getRun().getStartTimeInMillis());
+      if (compare == 0) {
+        return exec1.getRun().getFullDisplayName().compareToIgnoreCase(exec2.getRun().getFullDisplayName());
+      }
+      return compare;
+    });
+
+    // Load each execution from disk based on the index entries
+    for (String line : indexLines) {
+      String[] parts = line.split(",");
+      String jobName = parts[0];
+      int buildNumber = Integer.parseInt(parts[1]);
+
+      // Load the AgentExecution from the serialized file
+      AgentExecution execution = loadAgentExecution(nodeName, jobName, buildNumber);
+      if (execution != null) {
         executions.add(execution);
       }
     }
@@ -310,42 +382,58 @@ public class AgentBuildHistory implements Action {
     return Collections.unmodifiableSet(executions);
   }
 
-  @NonNull
-  private static AgentExecution getAgentExecution(Run<?, ?> run) {
-    String identifier = createExecutionIdentifier(run.getParent().getName(), run.getNumber());
-    AgentExecution exec = executionCache.get(identifier);
-    if (exec == null) {
-      LOGGER.log(Level.INFO, () -> "Loading execution for run " + run.getFullDisplayName());
-      exec = new AgentExecution(run);
-      executionCache.put(identifier, exec);
+  public List<AgentExecution> getExecutionsForNode(String nodeName, int start, int limit) {
+    List<AgentExecution> result = new ArrayList<>();
+    List<String> indexLines = readIndexFile(nodeName); //TODO when loading the first time, it cant find this file and throws an error java.io.FileNotFoundException: handle this case
+
+    // Sort index lines based on start time (or other criteria)
+    indexLines.sort((a, b) -> {//TODO change sorting descendant
+      long timeA = Long.parseLong(a.split(",")[2]);
+      long timeB = Long.parseLong(b.split(",")[2]);
+      return Long.compare(timeA, timeB);
+    });
+
+    // Apply pagination
+    int end = Math.min(start + limit, indexLines.size());
+    List<String> page = indexLines.subList(start, end);
+
+    for (String line : page) {
+      String[] parts = line.split(",");
+      String jobName = parts[0];
+      int buildNumber = Integer.parseInt(parts[1]);
+
+      // Load execution using deserialization
+      AgentExecution execution = loadAgentExecution(nodeName, jobName, buildNumber);
+      if (execution != null) {
+        result.add(execution);
+      }
     }
-    return exec;
+    return result;
   }
 
   public static void startJobExecution(Computer c, Run<?, ?> run) {
-    String identifier = createExecutionIdentifier(run.getParent().getName(), run.getNumber());
     AgentExecution execution = new AgentExecution(run);
-
-    // Cache the execution
-    executionCache.put(identifier, execution);
-
-
-    loadExecutions(c.getName()).add(identifier);
-
-    saveAgentExecution(c.getName(), execution);
+    appendAndIndexExecution(c.getName(), execution);
   }
 
   public static void startFlowNodeExecution(Computer c, WorkflowRun run, FlowNode node) {
-    String identifier = createExecutionIdentifier(run.getParent().getName(), run.getNumber());
-    AgentExecution exec = getAgentExecution(run);
-    exec.addFlowNode(node, c.getName());
+    String jobName = run.getParent().getFullName();
+    int buildNumber = run.getNumber();
+    String nodeName = c.getName();
 
-    // Cache the execution
-    executionCache.put(identifier, exec);
+    // Attempt to load the existing AgentExecution from disk
+    AgentExecution exec = loadAgentExecution(nodeName, jobName, buildNumber);
 
-    loadExecutions(c.getName()).add(identifier);
+    if (exec == null) {
+      // If no existing AgentExecution, create a new one
+      exec = new AgentExecution(run);
+    }
 
-    saveAgentExecution(c.getName(), exec);
+    // Add the FlowNode to the execution (either new or loaded)
+    exec.addFlowNode(node, nodeName);
+
+    // Save the updated or new execution back to disk
+    appendAndIndexExecution(nodeName, exec);
   }
 
   @Override

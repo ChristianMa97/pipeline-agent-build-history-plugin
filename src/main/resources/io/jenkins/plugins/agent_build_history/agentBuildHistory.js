@@ -61,6 +61,9 @@ window.abhDisplayExtendedBuildHistory = function(data) {
     const run = data[x];
     const tr = document.createElement("tr");
 
+    // Set a data attribute for sorting by startTimeInMillis
+    tr.setAttribute("data-start-time", run.startTimeInMillis);
+
     let td1 = document.createElement("td");
     td1.setAttribute("data", run.iconColorOrdinal);
     td1.classList.add("jenkins-table__cell--tight", "jenkins-table__icon", "abh-status");
@@ -161,5 +164,20 @@ window.abhDisplayExtendedBuildHistory = function(data) {
 
     Behaviour.applySubtree(tr);
   }
+  // Sort the table rows based on the data-start-time attribute
+  sortTableByStartTime(table);
   ts_refresh(table);
 };
+
+// Sorting function
+function sortTableByStartTime(table) {
+    const rowsArray = Array.from(table.tBodies[0].rows);
+    rowsArray.sort((rowA, rowB) => {
+        const timeA = parseInt(rowA.getAttribute('data-start-time'), 10);
+        const timeB = parseInt(rowB.getAttribute('data-start-time'), 10);
+        return timeB - timeA; // Sort in descending order (newest first)
+    });
+
+    // Append sorted rows back to the table body
+    rowsArray.forEach(row => table.tBodies[0].appendChild(row));
+}
