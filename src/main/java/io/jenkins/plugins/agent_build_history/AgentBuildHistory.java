@@ -45,6 +45,8 @@ public class AgentBuildHistory implements Action {
   
   private static boolean loadingComplete = false;
 
+  private static final int BATCH_SIZE = 20;
+
   static{
     File storageDir = new File(STORAGE_DIR);
     if(!storageDir.exists()){
@@ -53,123 +55,166 @@ public class AgentBuildHistory implements Action {
     }else {
       LOGGER.info("Storage directory already exists at " + STORAGE_DIR);
     }
+    schedulePeriodicCleanup(); // Schedule cleanup
   }
 
-  private static void appendAndIndexExecution(String nodeName, AgentExecution execution) {
-    // Append execution to node file
-    LOGGER.info("Appending execution for job: " + execution.getJobName() + ", build: " + execution.getBuildNumber() + " to node: " + nodeName);
-    File file = new File(STORAGE_DIR + "/" + nodeName + "_executions.ser");
-    try (FileOutputStream fos = new FileOutputStream(file, true); //Use AppendableObjectOutputStream if there is already data, to not rewrite Headers
-         ObjectOutputStream oos = file.exists() && file.length() > 0 ?
-                 new AppendableObjectOutputStream(fos) : new ObjectOutputStream(fos)) {
-      oos.writeObject(execution);
-      LOGGER.info("Execution appended successfully.");
-    } catch (IOException e) {
-      LOGGER.log(Level.WARNING, "Failed to append execution for node " + nodeName, e);
-    }
+  private static final Map<String, Object> nodeLocks = new HashMap<>(); //TODO remove objects when a node is deleted
 
-    // Update index for the node
-    try (BufferedWriter writer = new BufferedWriter(new FileWriter(STORAGE_DIR + "/" + nodeName + "_index.txt", true))) {
-      LOGGER.info("Updating index for node: " + nodeName);
-      writer.write(execution.getJobName() + "," + execution.getBuildNumber() + "," + execution.getStartTimeInMillis());
-      writer.newLine();
-      LOGGER.info("Index updated successfully for node: " + nodeName);
-    } catch (IOException e) {
-      LOGGER.log(Level.WARNING, "Failed to update index for node " + nodeName, e);
+  // Helper method to get or create a lock for a specific node
+  private static Object getNodeLock(String nodeName) {
+    synchronized (nodeLocks) {
+      return nodeLocks.computeIfAbsent(nodeName, k -> new Object());
+    }
+  }
+
+  private static void appendAndIndexExecution(String nodeName, AgentExecution execution, boolean isTemporary) {
+    // Append execution to node file
+    Object lock = getNodeLock(nodeName);
+    synchronized (lock) {
+      String fileSuffix = isTemporary ? "_tmp" : "";
+      LOGGER.info("Appending execution for job: " + execution.getJobName() + ", build: " + execution.getBuildNumber() + " to node: " + nodeName);
+      File file = new File(STORAGE_DIR + "/" + nodeName + "_executions" + fileSuffix + ".ser");
+      try (FileOutputStream fos = new FileOutputStream(file, true); //Use AppendableObjectOutputStream if there is already data, to not rewrite Headers
+           ObjectOutputStream oos = file.exists() && file.length() > 0 ?
+                   new AppendableObjectOutputStream(fos) : new ObjectOutputStream(fos)) {
+        oos.writeObject(execution);
+        LOGGER.info("Execution appended successfully.");
+      } catch (IOException e) {
+        LOGGER.log(Level.WARNING, "Failed to append execution for node " + nodeName, e);
+      }
+
+      // Update index for the node
+      try (BufferedWriter writer = new BufferedWriter(new FileWriter(STORAGE_DIR + "/" + nodeName + "_index" + fileSuffix + ".txt", true))) {
+        LOGGER.info("Updating index for node: " + nodeName);
+        writer.write(execution.getJobName() + "," + execution.getBuildNumber() + "," + execution.getStartTimeInMillis());
+        writer.newLine();
+        LOGGER.info("Index updated successfully for node: " + nodeName);
+      } catch (IOException e) {
+        LOGGER.log(Level.WARNING, "Failed to update index for node " + nodeName, e);
+      }
     }
   }
 
 //does not directly delete the serialized data, but marks it as deleted
   private static void markExecutionAsDeleted(String nodeName, String jobName, int buildNumber) {
-    LOGGER.info("Marking execution as deleted for job: " + jobName + ", build: " + buildNumber + " on node: " + nodeName);
-    List<String> indexLines = readIndexFile(nodeName);
-    try (BufferedWriter writer = new BufferedWriter(new FileWriter(STORAGE_DIR + "/" + nodeName + "_index.txt"))) {
-      for (String line : indexLines) {
-        if (line.startsWith(jobName + "," + buildNumber + ",")) {
-          writer.write(line + ",DELETED"); // Mark as deleted
-        } else {
-          writer.write(line);
+    Object lock = getNodeLock(nodeName);
+    synchronized (lock) {
+      LOGGER.info("Marking execution as deleted for job: " + jobName + ", build: " + buildNumber + " on node: " + nodeName);
+      List<String> indexLines = readIndexFile(nodeName);
+      try (BufferedWriter writer = new BufferedWriter(new FileWriter(STORAGE_DIR + "/" + nodeName + "_index.txt"))) {
+        for (String line : indexLines) {
+          if (line.startsWith(jobName + "," + buildNumber + ",")) {
+            writer.write(line + ",DELETED"); // Mark as deleted
+          } else {
+            writer.write(line);
+          }
+          writer.newLine();
         }
-        writer.newLine();
+        LOGGER.info("Execution marked as deleted for job: " + jobName + ", build: " + buildNumber + " on node: " + nodeName);
+      } catch (IOException e) {
+        LOGGER.log(Level.WARNING, "Failed to update index for node " + nodeName, e);
       }
-      LOGGER.info("Execution marked as deleted for job: " + jobName + ", build: " + buildNumber + " on node: " + nodeName);
-    } catch (IOException e) {
-      LOGGER.log(Level.WARNING, "Failed to update index for node " + nodeName, e);
     }
   }
   //return only non deleted executions
   private static List<String> readIndexFile(String nodeName) {
-    List<String> indexLines = new ArrayList<>();
-    try (BufferedReader reader = new BufferedReader(new FileReader(STORAGE_DIR + "/" + nodeName + "_index.txt"))) {
-      String line;
-      while ((line = reader.readLine()) != null) {
-        if (!line.endsWith(",DELETED")) { // Skip deleted entries
-          indexLines.add(line);
+    Object lock = getNodeLock(nodeName);
+    synchronized (lock) {
+      List<String> indexLines = new ArrayList<>();
+      try (BufferedReader reader = new BufferedReader(new FileReader(STORAGE_DIR + "/" + nodeName + "_index.txt"))) {
+        String line;
+        while ((line = reader.readLine()) != null) {
+          if (!line.endsWith(",DELETED")) { // Skip deleted entries
+            indexLines.add(line);
+          }
         }
+      } catch (IOException e) {
+        LOGGER.log(Level.WARNING, "Failed to read index file for node " + nodeName, e);
       }
-    } catch (IOException e) {
-      LOGGER.log(Level.WARNING, "Failed to read index file for node " + nodeName, e);
+      return indexLines;
     }
-    return indexLines;
   }
 
   // Deserialize an AgentExecution from disk
   private static AgentExecution loadAgentExecution(String nodeName, String jobName, int buildNumber) { //TODO make a better search algorithm in this file and not from top to bottom if possible, maybe use the index file first
-    LOGGER.info("Loading execution for job: " + jobName + ", build: " + buildNumber + " from node: " + nodeName);
-    try (ObjectInputStream ois = new ObjectInputStream(
-            new FileInputStream(STORAGE_DIR + "/" + nodeName + "_executions.ser"))) {
-      while (true) {
-        try {
-          AgentExecution execution = (AgentExecution) ois.readObject();
-          if (execution.getJobName().equals(jobName) && execution.getBuildNumber() == buildNumber) {
-            LOGGER.info("Execution found and loaded for job: " + jobName + ", build: " + buildNumber);
-            return execution;
+    Object lock = getNodeLock(nodeName);
+    synchronized (lock) {
+      LOGGER.info("Loading execution for job: " + jobName + ", build: " + buildNumber + " from node: " + nodeName);
+      try (ObjectInputStream ois = new ObjectInputStream(
+              new FileInputStream(STORAGE_DIR + "/" + nodeName + "_executions.ser"))) {
+        while (true) {
+          try {
+            AgentExecution execution = (AgentExecution) ois.readObject();
+            if (execution.getJobName().equals(jobName) && execution.getBuildNumber() == buildNumber) {
+              LOGGER.info("Execution found and loaded for job: " + jobName + ", build: " + buildNumber);
+              return execution;
+            }
+          } catch (EOFException eof) {
+            break; // End of file reached
           }
-        } catch (EOFException eof) {
-          break; // End of file reached
         }
+      } catch (IOException | ClassNotFoundException e) {
+        LOGGER.log(Level.WARNING, "Failed to load execution for node " + nodeName, e);
       }
-    } catch (IOException | ClassNotFoundException e) {
-      LOGGER.log(Level.WARNING, "Failed to load execution for node " + nodeName, e);
+      LOGGER.warning("Execution not found for job: " + jobName + ", build: " + buildNumber + " on node: " + nodeName);
+      return null;
     }
-    LOGGER.warning("Execution not found for job: " + jobName + ", build: " + buildNumber + " on node: " + nodeName);
-    return null;
+  }
+
+  private static void schedulePeriodicCleanup() {
+    Timer.get().scheduleAtFixedRate(() -> {
+      Set<String> nodeNames = getAllSavedNodeNames();
+      for (String nodeName : nodeNames) {
+        LOGGER.info("Running periodic cleanup for node: " + nodeName);
+        rewriteExecutionFile(nodeName);
+      }
+    }, 10, 10, TimeUnit.MINUTES); // Runs cleanup every 10 minutes
   }
 
   private static void rewriteExecutionFile(String nodeName) {
-    List<AgentExecution> allExecutions = new ArrayList<>();
-    List<String> indexLines = readIndexFile(nodeName);
+    Object lock = getNodeLock(nodeName);
+    synchronized (lock) {
+      List<String> indexLines = readIndexFile(nodeName);
 
-    // Read all non-deleted executions
-    for (String line : indexLines) {
-      if (!line.endsWith(",DELETED")) {
-        String[] parts = line.split(",");
-        String jobName = parts[0];
-        int buildNumber = Integer.parseInt(parts[1]);
-        AgentExecution execution = loadAgentExecution(nodeName, jobName, buildNumber);
-        if (execution != null) {
-          allExecutions.add(execution);
+      int currentBatchStart = 0;
+
+      while (currentBatchStart < indexLines.size()) {
+        List<AgentExecution> batchExecutions = new ArrayList<>();
+        int currentBatchEnd = Math.min(currentBatchStart + BATCH_SIZE, indexLines.size());
+        List<String> batchLines = indexLines.subList(currentBatchStart, currentBatchEnd);
+
+        // Read and process the current batch
+        for (String line : batchLines) {
+          if (!line.endsWith(",DELETED")) {
+            String[] parts = line.split(",");
+            String jobName = parts[0];
+            int buildNumber = Integer.parseInt(parts[1]);
+            AgentExecution execution = loadAgentExecution(nodeName, jobName, buildNumber);
+            if (execution != null) {
+              batchExecutions.add(execution);
+            }
+          }
         }
-      }
-    }
+        // Write each execution in the batch to a temporary file
+        for (AgentExecution execution : batchExecutions) {
+          appendAndIndexExecution(nodeName, execution, true); // true to write to temp files
+        }
 
-    // Write all executions back to the file
-    try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(STORAGE_DIR + "/" + nodeName + "_executions.ser"))) {
-      for (AgentExecution execution : allExecutions) {
-        oos.writeObject(execution);
+        currentBatchStart = currentBatchEnd;
       }
-    } catch (IOException e) {
-      LOGGER.log(Level.WARNING, "Failed to rewrite executions file for node " + nodeName, e);
-    }
 
-    // Update the index file with only non-deleted entries
-    try (BufferedWriter writer = new BufferedWriter(new FileWriter(STORAGE_DIR + "/" + nodeName + "_index.txt"))) {
-      for (AgentExecution execution : allExecutions) {
-        writer.write(execution.getJobName() + "," + execution.getBuildNumber() + "," + execution.getStartTimeInMillis());
-        writer.newLine();
+      // Replace the original files with the temporary files
+      File tempFile = new File(STORAGE_DIR + "/" + nodeName + "_executions_tmp.ser");
+      File originalFile = new File(STORAGE_DIR + "/" + nodeName + "_executions.ser");
+      if (!tempFile.renameTo(originalFile)) {
+        LOGGER.log(Level.WARNING, "Failed to replace the original executions file for node " + nodeName);
       }
-    } catch (IOException e) {
-      LOGGER.log(Level.WARNING, "Failed to update index for node " + nodeName, e);
+
+      File tempIndexFile = new File(STORAGE_DIR + "/" + nodeName + "_index_tmp.txt");
+      File originalIndexFile = new File(STORAGE_DIR + "/" + nodeName + "_index.txt");
+      if (!tempIndexFile.renameTo(originalIndexFile)) {
+        LOGGER.log(Level.WARNING, "Failed to replace the original index file for node " + nodeName);
+      }
     }
   }
 
@@ -218,19 +263,22 @@ public class AgentBuildHistory implements Action {
 
         Set<String> nodeNames = getAllSavedNodeNames();
         for (String nodeName : nodeNames) {
-          List<String> indexLines = readIndexFile(nodeName);
-          try (BufferedWriter writer = new BufferedWriter(new FileWriter(STORAGE_DIR + "/" + nodeName + "_index.txt"))) {
-            for (String line : indexLines) {
-              if (line.startsWith(jobName + ",")) {
-                writer.write(line + ",DELETED"); // Mark as deleted
-              } else {
-                writer.write(line);
+          Object lock = getNodeLock(nodeName);
+          synchronized (lock) {
+            List<String> indexLines = readIndexFile(nodeName);
+            try (BufferedWriter writer = new BufferedWriter(new FileWriter(STORAGE_DIR + "/" + nodeName + "_index.txt"))) {
+              for (String line : indexLines) {
+                if (line.startsWith(jobName + ",")) {
+                  writer.write(line + ",DELETED"); // Mark as deleted
+                } else {
+                  writer.write(line);
+                }
+                writer.newLine();
               }
-              writer.newLine();
+              LOGGER.info("Job marked for deletion: " + jobName);
+            } catch (IOException e) {
+              LOGGER.log(Level.WARNING, "Failed to update index for node " + nodeName, e);
             }
-            LOGGER.info("Job marked for deletion: " + jobName);
-          } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "Failed to update index for node " + nodeName, e);
           }
         }
       }
@@ -244,20 +292,22 @@ public class AgentBuildHistory implements Action {
     @Override
     protected void onDeleted(@NonNull Node node) {
       String nodeName = node.getNodeName();
+      Object lock = getNodeLock(nodeName);
+      synchronized (lock) {
+        // Delete the index file for the node
+        File indexFile = new File(STORAGE_DIR + "/" + nodeName + "_index.txt");
+        if (indexFile.exists() && !indexFile.delete()) {
+          LOGGER.log(Level.WARNING, "Failed to delete index file for node: " + nodeName);
+        }
 
-      // Delete the index file for the node
-      File indexFile = new File(STORAGE_DIR + "/" + nodeName + "_index.txt");
-      if (indexFile.exists() && !indexFile.delete()) {
-        LOGGER.log(Level.WARNING, "Failed to delete index file for node: " + nodeName);
+        // Delete the serialized executions file for the node
+        File executionsFile = new File(STORAGE_DIR + "/" + nodeName + "_executions.ser");
+        if (executionsFile.exists() && !executionsFile.delete()) {
+          LOGGER.log(Level.WARNING, "Failed to delete executions file for node: " + nodeName);
+        }
+
+        LOGGER.log(Level.INFO, () -> "Removed all execution data for deleted node: " + nodeName);
       }
-
-      // Delete the serialized executions file for the node
-      File executionsFile = new File(STORAGE_DIR + "/" + nodeName + "_executions.ser");
-      if (executionsFile.exists() && !executionsFile.delete()) {
-        LOGGER.log(Level.WARNING, "Failed to delete executions file for node: " + nodeName);
-      }
-
-      LOGGER.log(Level.INFO, () -> "Removed all execution data for deleted node: " + nodeName);
     }
   }
 
@@ -318,7 +368,7 @@ public class AgentBuildHistory implements Action {
         Node node = ((AbstractBuild<?, ?>) run).getBuiltOn();
         if (node != null) {
           LOGGER.info("Loading AbstractBuild on node: " + node.getNodeName());
-          appendAndIndexExecution(node.getNodeName(), execution);
+          appendAndIndexExecution(node.getNodeName(), execution, false);
         }
       } else if (run instanceof WorkflowRun) {
         WorkflowRun wfr = (WorkflowRun) run;
@@ -336,7 +386,7 @@ public class AgentBuildHistory implements Action {
                 String nodeName = action.getNode();
                 execution.addFlowNode(flowNode, nodeName);
                 LOGGER.info("Loading WorkflowRun FlowNode on node: " + nodeName);
-                appendAndIndexExecution(nodeName, execution);
+                appendAndIndexExecution(nodeName, execution, false);
               }
             }
           }
@@ -350,6 +400,7 @@ public class AgentBuildHistory implements Action {
   }
 
   /* Use by jelly */
+  @Deprecated
   public Set<AgentExecution> getExecutions() {
     // Get the node name associated with this AgentBuildHistory instance
     String nodeName = computer.getName();
@@ -413,7 +464,7 @@ public class AgentBuildHistory implements Action {
 
   public static void startJobExecution(Computer c, Run<?, ?> run) {
     AgentExecution execution = new AgentExecution(run);
-    appendAndIndexExecution(c.getName(), execution);
+    appendAndIndexExecution(c.getName(), execution, false);
   }
 
   public static void startFlowNodeExecution(Computer c, WorkflowRun run, FlowNode node) {
@@ -433,7 +484,7 @@ public class AgentBuildHistory implements Action {
     exec.addFlowNode(node, nodeName);
 
     // Save the updated or new execution back to disk
-    appendAndIndexExecution(nodeName, exec);
+    appendAndIndexExecution(nodeName, exec, false);//TODO is it writing a new entry? or updating the existing one? If writing new at least mark the old one as Deleted
   }
 
   @Override
