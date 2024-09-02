@@ -32,6 +32,9 @@ import org.jenkinsci.plugins.workflow.support.actions.WorkspaceActionImpl;
 import org.jenkinsci.plugins.workflow.support.steps.ExecutorStep;
 import org.kohsuke.accmod.Restricted;
 import org.kohsuke.accmod.restrictions.NoExternalUse;
+import org.kohsuke.stapler.QueryParameter;
+import org.kohsuke.stapler.Stapler;
+import org.kohsuke.stapler.StaplerRequest;
 
 @Restricted(NoExternalUse.class)
 public class AgentBuildHistory implements Action {
@@ -40,12 +43,17 @@ public class AgentBuildHistory implements Action {
   private static final String STORAGE_DIR = "/var/jenkins_home/serialized_data";
 
   private final Computer computer;
+  private int totalPages = 1;
 
   private static boolean loaded = false;
   
   private static boolean loadingComplete = false;
 
   private static final int BATCH_SIZE = 20;
+
+  private static final int DEFAULT_LIMIT = 20;
+
+  public boolean hasMoreData = true;
 
   static{
     File storageDir = new File(STORAGE_DIR);
@@ -326,6 +334,10 @@ public class AgentBuildHistory implements Action {
     return false;
   }
 
+  public int getTotalPages() {
+    return totalPages;
+  }
+
   public AgentBuildHistory(Computer computer) {
     this.computer = computer;
     LOGGER.log(Level.INFO, () -> "Creating AgentBuildHistory for " + computer.getName());
@@ -350,10 +362,24 @@ public class AgentBuildHistory implements Action {
         Timer.get().schedule(AgentBuildHistory::load, 0, TimeUnit.SECONDS);
       } else {
         loaded = true; // Mark as loaded because we found existing content
+        loadingComplete = true;
       }
     }
     RunListTable runListTable = new RunListTable(computer.getName());
-    runListTable.setRuns(getExecutionsForNode(computer.getName(), 0, 100));
+    //Get Parameters from URL
+    StaplerRequest req = Stapler.getCurrentRequest();
+    int page = req.getParameter("page") != null ? Integer.parseInt(req.getParameter("page")) : 1;
+    int pageSize = req.getParameter("pageSize") != null ? Integer.parseInt(req.getParameter("pageSize")) : DEFAULT_LIMIT;
+    String sortColumn = req.getParameter("sortColumn") != null ? req.getParameter("sortColumn") : "startTime";
+    String sortOrder = req.getParameter("sortOrder") != null ? req.getParameter("sortOrder") : "desc";
+    //Update totalPages depending on pageSize
+    int totalEntries = readIndexFile(computer.getName()).size();
+    totalPages = (int) Math.ceil((double) totalEntries / pageSize);
+
+    LOGGER.info("Getting runs for node: " + computer.getName() + " page: " + page + " pageSize: " + pageSize + " sortColumn: " + sortColumn + " sortOrder: " + sortOrder);
+
+    int start = (page-1)*pageSize;
+    runListTable.setRuns(getExecutionsForNode(computer.getName(), start, pageSize, sortColumn, sortOrder));
     return  runListTable;
   }
 
@@ -399,49 +425,66 @@ public class AgentBuildHistory implements Action {
     LOGGER.log(Level.INFO, () -> "Loading all runs complete");
   }
 
-  /* Use by jelly */
-  @Deprecated
-  public Set<AgentExecution> getExecutions() {
-    // Get the node name associated with this AgentBuildHistory instance
-    String nodeName = computer.getName();
+//  /* Use by jelly */
+//  @Deprecated
+//  public Set<AgentExecution> getExecutions() {
+//    // Get the node name associated with this AgentBuildHistory instance
+//    String nodeName = computer.getName();
+//
+//    // Read the index file for this node to get all execution entries
+//    List<String> indexLines = readIndexFile(nodeName);
+//
+//    Set<AgentExecution> executions = new TreeSet<>((exec1, exec2) -> {
+//      // Sort by start time, and by full display name if start times are equal
+//      int compare = Long.compare(exec1.getRun().getStartTimeInMillis(), exec2.getRun().getStartTimeInMillis());
+//      if (compare == 0) {
+//        return exec1.getRun().getFullDisplayName().compareToIgnoreCase(exec2.getRun().getFullDisplayName());
+//      }
+//      return compare;
+//    });
+//
+//    // Load each execution from disk based on the index entries
+//    for (String line : indexLines) {
+//      String[] parts = line.split(",");
+//      String jobName = parts[0];
+//      int buildNumber = Integer.parseInt(parts[1]);
+//
+//      // Load the AgentExecution from the serialized file
+//      AgentExecution execution = loadAgentExecution(nodeName, jobName, buildNumber);
+//      if (execution != null) {
+//        executions.add(execution);
+//      }
+//    }
+//
+//    return Collections.unmodifiableSet(executions);
+//  }
 
-    // Read the index file for this node to get all execution entries
-    List<String> indexLines = readIndexFile(nodeName);
-
-    Set<AgentExecution> executions = new TreeSet<>((exec1, exec2) -> {
-      // Sort by start time, and by full display name if start times are equal
-      int compare = Long.compare(exec1.getRun().getStartTimeInMillis(), exec2.getRun().getStartTimeInMillis());
-      if (compare == 0) {
-        return exec1.getRun().getFullDisplayName().compareToIgnoreCase(exec2.getRun().getFullDisplayName());
-      }
-      return compare;
-    });
-
-    // Load each execution from disk based on the index entries
-    for (String line : indexLines) {
-      String[] parts = line.split(",");
-      String jobName = parts[0];
-      int buildNumber = Integer.parseInt(parts[1]);
-
-      // Load the AgentExecution from the serialized file
-      AgentExecution execution = loadAgentExecution(nodeName, jobName, buildNumber);
-      if (execution != null) {
-        executions.add(execution);
-      }
-    }
-
-    return Collections.unmodifiableSet(executions);
-  }
-
-  public List<AgentExecution> getExecutionsForNode(String nodeName, int start, int limit) {
+  public List<AgentExecution> getExecutionsForNode(String nodeName, int start, int limit, String sortColumn, String sortOrder) {
     List<AgentExecution> result = new ArrayList<>();
     List<String> indexLines = readIndexFile(nodeName); //TODO when loading the first time, it cant find this file and throws an error java.io.FileNotFoundException: handle this case
 
     // Sort index lines based on start time (or other criteria)
-    indexLines.sort((a, b) -> {//TODO change sorting descendant
-      long timeA = Long.parseLong(a.split(",")[2]);
-      long timeB = Long.parseLong(b.split(",")[2]);
-      return Long.compare(timeA, timeB);
+    indexLines.sort((a, b) -> {
+      int comparison = 0;
+      switch(sortColumn){
+        case "startTime":
+          long timeA = Long.parseLong(a.split(",")[2]);
+          long timeB = Long.parseLong(b.split(",")[2]);
+          comparison = Long.compare(timeA, timeB);
+          break;
+        case "build":
+          comparison = a.split(",")[0].compareTo(b.split(",")[0]);
+          if (comparison == 0) {
+            // Only compare build numbers if the job names are the same
+            int buildNumberA = Integer.parseInt(a.split(",")[1]);
+            int buildNumberB = Integer.parseInt(b.split(",")[1]);
+            comparison = Integer.compare(buildNumberA, buildNumberB);
+          }
+          break;
+        default:
+          comparison = 0;
+      }
+        return sortOrder.equals("asc") ? comparison : -comparison;
     });
 
     // Apply pagination

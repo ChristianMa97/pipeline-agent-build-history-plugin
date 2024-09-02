@@ -99,6 +99,9 @@ window.abhDisplayExtendedBuildHistory = function(data) {
     let tdMessage = document.createElement("td");
     tdMessage.innerText = run.shortDescription;
 
+    let tdStarted = document.createElement("td");
+    tdStarted.innerText = run.startTimeReadable;
+
     let tdTimeSince = document.createElement("td");
     let tdDuration = document.createElement("td");
     let tdStatus = document.createElement("td");
@@ -155,6 +158,7 @@ window.abhDisplayExtendedBuildHistory = function(data) {
     tdConsole.appendChild(div2);
 
     tr.appendChild(tdMessage);
+    tr.appendChild(tdStarted);
     tr.appendChild(tdTimeSince);
     tr.appendChild(tdDuration);
     tr.appendChild(tdStatus);
@@ -164,20 +168,5 @@ window.abhDisplayExtendedBuildHistory = function(data) {
 
     Behaviour.applySubtree(tr);
   }
-  // Sort the table rows based on the data-start-time attribute
-  sortTableByStartTime(table);
   ts_refresh(table);
 };
-
-// Sorting function
-function sortTableByStartTime(table) {
-    const rowsArray = Array.from(table.tBodies[0].rows);
-    rowsArray.sort((rowA, rowB) => {
-        const timeA = parseInt(rowA.getAttribute('data-start-time'), 10);
-        const timeB = parseInt(rowB.getAttribute('data-start-time'), 10);
-        return timeB - timeA; // Sort in descending order (newest first)
-    });
-
-    // Append sorted rows back to the table body
-    rowsArray.forEach(row => table.tBodies[0].appendChild(row));
-}

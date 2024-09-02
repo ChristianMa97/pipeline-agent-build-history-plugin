@@ -90,3 +90,9 @@
   gap: 18px;
   padding: 0 15px;
 }
+
+.jenkins-table>thead>tr>th a {
+    text-decoration: underline; /* Underline for sortable columns */
+    color: #007bff; /* Change color for better visibility */
+    font-weight: 600; /* Remove bold for better visibility */
+}

@@ -34,17 +34,55 @@
       <t:setIconSize/>
       <st:adjunct includes="io.jenkins.plugins.agent_build_history.agentBuildHistory" />
       <l:progressiveRendering handler="${it.handler}" callback="abhDisplayExtendedBuildHistory"/>
-      <table class="jenkins-table sortable ${iconSize == '16x16' ? 'jenkins-table--small' : iconSize == '24x24' ? 'jenkins-table--medium' : ''}"
+      <!-- Pagination Controls -->
+      <j:set var="page" value="${request.getParameter('page') != null ? request.getParameter('page') : 1}"/>
+      <j:set var="pageSize" value="${request.getParameter('pageSize') != null ? request.getParameter('pageSize') : 20}"/>
+      <j:set var="totalPages" value="${it.totalPages}"/>
+      <j:set var="sortColumn" value="${request.getParameter('sortColumn') != null ? request.getParameter('sortColumn') : 'startTime'}"/>
+      <j:set var="sortOrder" value="${request.getParameter('sortOrder') != null ? request.getParameter('sortOrder') : 'desc'}"/>
+      <div class="pagination">
+        <j:if test="${page &gt; 1}">
+          <a href="${request.requestURI}?page=${page - 1}&amp;pageSize=${pageSize}&amp;sortColumn=${sortColumn}&amp;sortOrder=${sortOrder}">&#171; Previous </a>
+        </j:if>
+        <span> Page ${page} of ${totalPages} </span>
+        <j:if test="${page &lt; totalPages}">
+          <a href="${request.requestURI}?page=${page + 1}&amp;pageSize=${pageSize}&amp;sortColumn=${sortColumn}&amp;sortOrder=${sortOrder}"> Next &#187;</a>
+        </j:if>
+      </div>
+      <table class="jenkins-table ${iconSize == '16x16' ? 'jenkins-table--small' : iconSize == '24x24' ? 'jenkins-table--medium' : ''}"
              id="projectStatus" style="display: none; width: auto;" data-icon-size-class="${iconSizeClass}"
              data-show-text="${%Show nodes}" data-hide-text="${%Hide nodes}" >
         <thead>
           <tr>
-            <th class="jenkins-table__cell--tight abh-status">${%S}</th>
-            <th>${%Build}</th>
-            <th>${%Message}</th>
-            <th>${%Time Since}</th>
-            <th>${%Duration}</th>
-            <th>${%Status}</th>
+            <th class="jenkins-table__cell--tight abh-status" data-sort-disable="true">${%S}</th>
+            <th>
+              <a class="sortheader"
+                 href="${request.requestURI}?page=${page}&amp;pageSize=${pageSize}&amp;sortColumn=build&amp;sortOrder=${sortColumn == 'build' ? (sortOrder == 'asc' ? 'desc' : 'asc') : 'desc'}">
+                ${%Build}
+                <j:if test="${sortColumn == 'build'}">
+                  <j:choose>
+                    <j:when test="${sortOrder == 'asc'}"> <span class="sortarrow" style="font-size: large;">  ↑</span> <!-- Up arrow for ascending order --></j:when>
+                    <j:otherwise> <span class="sortarrow" style="font-size: large;">  ↓</span> <!-- Down arrow for descending order --></j:otherwise>
+                  </j:choose>
+                </j:if>
+              </a>
+            </th>
+            <th data-sort-disable="true">${%Message}</th>
+            <th>
+              <a class="sortheader"
+                 href="${request.requestURI}?page=${page}&amp;pageSize=${pageSize}&amp;sortColumn=startTime&amp;sortOrder=${sortColumn == 'startTime' ? (sortOrder == 'asc' ? 'desc' : 'asc') : 'desc'}">
+                ${%Started}
+                <j:if test="${sortColumn == 'startTime'}">
+                  <j:choose>
+                    <j:when test="${sortOrder == 'asc'}"> <span class="sortarrow" style="font-size: large;">  ↑</span> <!-- Up arrow for ascending order --></j:when>
+                    <j:otherwise> <span class="sortarrow" style="font-size: large;">  ↓</span> <!-- Down arrow for descending order --></j:otherwise>
+                  </j:choose>
+                </j:if>
+              </a>
+            </th>
+            <th data-sort-disable="true">${%Time Since}</th>
+            <th data-sort-disable="true">${%Duration}</th>
+            <th data-sort-disable="true">${%Status}</th>
             <th data-sort-disable="true"/>
             <th class="jenkins-table__cell--tight" data-sort-disable="true"></th>
           </tr>
