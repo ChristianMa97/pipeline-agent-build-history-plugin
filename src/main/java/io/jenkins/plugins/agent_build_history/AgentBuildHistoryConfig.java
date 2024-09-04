@@ -3,10 +3,18 @@ package io.jenkins.plugins.agent_build_history;
 import hudson.Extension;
 import hudson.util.ListBoxModel;
 import jenkins.model.GlobalConfiguration;
+import jenkins.util.Timer;
 import org.kohsuke.stapler.DataBoundSetter;
+
+import java.io.File;
+import java.util.Set;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.logging.Logger;
 
 @Extension
 public class AgentBuildHistoryConfig extends GlobalConfiguration {
+    private static final Logger LOGGER = Logger.getLogger(AgentBuildHistoryConfig.class.getName());
 
     private String storageDir = "/var/jenkins_home/serialized_data";
     private int deleteBatchSize = 20;
@@ -15,8 +23,38 @@ public class AgentBuildHistoryConfig extends GlobalConfiguration {
     private String defaultSortOrder = "desc";
     private int deleteIntervalInMinutes = 60;
 
+    private static ScheduledFuture<?> cleanupTask; // Reference to the scheduled cleanup task
+
     public AgentBuildHistoryConfig() {
         load(); // Load the persisted configuration
+        ensureStorageDir();
+        schedulePeriodicCleanup();
+    }
+
+    private void ensureStorageDir() {
+        File storageDirectory = new File(storageDir);
+        if (!storageDirectory.exists()) {
+            LOGGER.info("Creating storage directory at " + storageDir);
+            storageDirectory.mkdirs();
+        } else {
+            LOGGER.info("Storage directory already exists at " + storageDir);
+        }
+    }
+
+    private void schedulePeriodicCleanup() {
+        // Cancel the existing task if it is running
+        if (cleanupTask != null && !cleanupTask.isCancelled()) {
+            cleanupTask.cancel(true); // Cancel the old task
+            LOGGER.info("Canceled existing cleanup task.");
+        }
+        cleanupTask = Timer.get().scheduleAtFixedRate(() -> {
+            Set<String> nodeNames = BuildHistoryFileManager.getAllSavedNodeNames(storageDir);
+            for (String nodeName : nodeNames) {
+                LOGGER.info("Running periodic cleanup for node: " + nodeName);
+                BuildHistoryFileManager.rewriteExecutionFile(nodeName, storageDir, getDeleteBatchSize());
+            }
+        }, deleteIntervalInMinutes, deleteIntervalInMinutes, TimeUnit.MINUTES);
+        LOGGER.info("Scheduled new cleanup task with interval: " + deleteIntervalInMinutes + " minutes.");
     }
 
     public String getStorageDir() {
@@ -24,9 +62,15 @@ public class AgentBuildHistoryConfig extends GlobalConfiguration {
     }
 
     @DataBoundSetter
-    public void setStorageDir(String storageDir) {//TODO clean old storage dir and set loaded and cleanup to false
-        this.storageDir = storageDir;
-        save(); // Save the configuration
+    public void setStorageDir(String storageDir) {
+        if (!this.storageDir.equals(storageDir)) {
+            LOGGER.info("Changing storage directory from " + this.storageDir + " to " + storageDir);
+            this.storageDir = storageDir;
+            ensureStorageDir();
+            schedulePeriodicCleanup();
+            AgentBuildHistory.setLoaded(false);
+            save(); // Save the configuration
+        }
     }
 
     public int getDeleteBatchSize() {
@@ -80,6 +124,7 @@ public class AgentBuildHistoryConfig extends GlobalConfiguration {
     @DataBoundSetter
     public void setDeleteIntervalInMinutes(int deleteIntervalInMinutes) {
         this.deleteIntervalInMinutes = deleteIntervalInMinutes;
+        schedulePeriodicCleanup();
         save();
     }
 

@@ -4,6 +4,10 @@
     <f:entry title="Storage Directory" field="storageDir">
         <f:textbox />
     </f:entry>
+    <p class="info">Note: On storage directory change, old data must be removed manually. A new synchronization will start on the next access to the Agent History.</p>
+    <f:entry title="Delete Interval in Minutes" field="deleteIntervalInMinutes">
+        <f:number min="1" default="60"/>
+    </f:entry>
     <f:entry title="Delete Batch Size" field="deleteBatchSize">
         <f:number min="1" default="20"/>
     </f:entry>
