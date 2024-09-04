@@ -36,10 +36,10 @@
       <l:progressiveRendering handler="${it.handler}" callback="abhDisplayExtendedBuildHistory"/>
       <!-- Pagination Controls -->
       <j:set var="page" value="${request.getParameter('page') != null ? request.getParameter('page') : 1}"/>
-      <j:set var="pageSize" value="${request.getParameter('pageSize') != null ? request.getParameter('pageSize') : 20}"/>
+      <j:set var="pageSize" value="${request.getParameter('pageSize') != null ? request.getParameter('pageSize') : it.entriesPerPage}"/>
       <j:set var="totalPages" value="${it.totalPages}"/>
-      <j:set var="sortColumn" value="${request.getParameter('sortColumn') != null ? request.getParameter('sortColumn') : 'startTime'}"/>
-      <j:set var="sortOrder" value="${request.getParameter('sortOrder') != null ? request.getParameter('sortOrder') : 'desc'}"/>
+      <j:set var="sortColumn" value="${request.getParameter('sortColumn') != null ? request.getParameter('sortColumn') : it.defaultSortColumn}"/>
+      <j:set var="sortOrder" value="${request.getParameter('sortOrder') != null ? request.getParameter('sortOrder') : it.defaultSortOrder}"/>
       <div class="pagination">
         <j:if test="${page &gt; 1}">
           <a href="${request.requestURI}?page=${page - 1}&amp;pageSize=${pageSize}&amp;sortColumn=${sortColumn}&amp;sortOrder=${sortOrder}">&#171; Previous </a>
@@ -57,7 +57,7 @@
             <th class="jenkins-table__cell--tight abh-status" data-sort-disable="true">${%S}</th>
             <th>
               <a class="sortheader"
-                 href="${request.requestURI}?page=${page}&amp;pageSize=${pageSize}&amp;sortColumn=build&amp;sortOrder=${sortColumn == 'build' ? (sortOrder == 'asc' ? 'desc' : 'asc') : 'desc'}">
+                 href="${request.requestURI}?page=${page}&amp;pageSize=${pageSize}&amp;sortColumn=build&amp;sortOrder=${sortColumn == 'build' ? (sortOrder == 'asc' ? 'desc' : 'asc') : sortOrder}">
                 ${%Build}
                 <j:if test="${sortColumn == 'build'}">
                   <j:choose>
@@ -70,7 +70,7 @@
             <th data-sort-disable="true">${%Message}</th>
             <th>
               <a class="sortheader"
-                 href="${request.requestURI}?page=${page}&amp;pageSize=${pageSize}&amp;sortColumn=startTime&amp;sortOrder=${sortColumn == 'startTime' ? (sortOrder == 'asc' ? 'desc' : 'asc') : 'desc'}">
+                 href="${request.requestURI}?page=${page}&amp;pageSize=${pageSize}&amp;sortColumn=startTime&amp;sortOrder=${sortColumn == 'startTime' ? (sortOrder == 'asc' ? 'desc' : 'asc') : sortOrder}">
                 ${%Started}
                 <j:if test="${sortColumn == 'startTime'}">
                   <j:choose>

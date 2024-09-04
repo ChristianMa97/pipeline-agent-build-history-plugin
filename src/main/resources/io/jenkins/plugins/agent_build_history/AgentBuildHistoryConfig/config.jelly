@@ -1,0 +1,20 @@
+<?jelly escape-by-default='true'?>
+<j:jelly xmlns:j="jelly:core" xmlns:st="jelly:stapler" xmlns:l="/lib/layout" xmlns:t="/lib/hudson" xmlns:f="/lib/form">
+<f:section title="Agent Build History Settings">
+    <f:entry title="Storage Directory" field="storageDir">
+        <f:textbox />
+    </f:entry>
+    <f:entry title="Delete Batch Size" field="deleteBatchSize">
+        <f:number min="1" default="20"/>
+    </f:entry>
+    <f:entry title="Entries per Page" field="entriesPerPage">
+        <f:number min="1" default="30"/>
+    </f:entry>
+    <f:entry title="Default Sort Column">
+        <f:select field="defaultSortColumn"/>
+    </f:entry>
+    <f:entry title="Default Sort Order">
+        <f:select field="defaultSortOrder"/>
+    </f:entry>
+</f:section>
+</j:jelly>

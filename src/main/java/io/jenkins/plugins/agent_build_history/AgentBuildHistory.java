@@ -40,7 +40,6 @@ import org.kohsuke.stapler.StaplerRequest;
 public class AgentBuildHistory implements Action {
 
   private static final Logger LOGGER = Logger.getLogger(AgentBuildHistory.class.getName());
-  private static final String STORAGE_DIR = "/var/jenkins_home/serialized_data";
 
   private final Computer computer;
   private int totalPages = 1;
@@ -49,19 +48,14 @@ public class AgentBuildHistory implements Action {
   
   private static boolean loadingComplete = false;
 
-  private static final int BATCH_SIZE = 20;
 
-  private static final int DEFAULT_LIMIT = 20;
-
-  public boolean hasMoreData = true;
-
-  static{
-    File storageDir = new File(STORAGE_DIR);
+  static{ //TODO do this on storage dir change and remove old scheduler
+    File storageDir = new File(getStorageDir());
     if(!storageDir.exists()){
-      LOGGER.info("Creating storage directory at " + STORAGE_DIR);
+      LOGGER.info("Creating storage directory at " + getStorageDir());
       storageDir.mkdirs();
     }else {
-      LOGGER.info("Storage directory already exists at " + STORAGE_DIR);
+      LOGGER.info("Storage directory already exists at " + getStorageDir());
     }
     schedulePeriodicCleanup(); // Schedule cleanup
   }
@@ -81,7 +75,7 @@ public class AgentBuildHistory implements Action {
     synchronized (lock) {
       String fileSuffix = isTemporary ? "_tmp" : "";
       LOGGER.info("Appending execution for job: " + execution.getJobName() + ", build: " + execution.getBuildNumber() + " to node: " + nodeName);
-      File file = new File(STORAGE_DIR + "/" + nodeName + "_executions" + fileSuffix + ".ser");
+      File file = new File(getStorageDir() + "/" + nodeName + "_executions" + fileSuffix + ".ser");
       try (FileOutputStream fos = new FileOutputStream(file, true); //Use AppendableObjectOutputStream if there is already data, to not rewrite Headers
            ObjectOutputStream oos = file.exists() && file.length() > 0 ?
                    new AppendableObjectOutputStream(fos) : new ObjectOutputStream(fos)) {
@@ -92,7 +86,7 @@ public class AgentBuildHistory implements Action {
       }
 
       // Update index for the node
-      try (BufferedWriter writer = new BufferedWriter(new FileWriter(STORAGE_DIR + "/" + nodeName + "_index" + fileSuffix + ".txt", true))) {
+      try (BufferedWriter writer = new BufferedWriter(new FileWriter(getStorageDir() + "/" + nodeName + "_index" + fileSuffix + ".txt", true))) {
         LOGGER.info("Updating index for node: " + nodeName);
         writer.write(execution.getJobName() + "," + execution.getBuildNumber() + "," + execution.getStartTimeInMillis());
         writer.newLine();
@@ -109,7 +103,7 @@ public class AgentBuildHistory implements Action {
     synchronized (lock) {
       LOGGER.info("Marking execution as deleted for job: " + jobName + ", build: " + buildNumber + " on node: " + nodeName);
       List<String> indexLines = readIndexFile(nodeName);
-      try (BufferedWriter writer = new BufferedWriter(new FileWriter(STORAGE_DIR + "/" + nodeName + "_index.txt"))) {
+      try (BufferedWriter writer = new BufferedWriter(new FileWriter(getStorageDir() + "/" + nodeName + "_index.txt"))) {
         for (String line : indexLines) {
           if (line.startsWith(jobName + "," + buildNumber + ",")) {
             writer.write(line + ",DELETED"); // Mark as deleted
@@ -129,7 +123,7 @@ public class AgentBuildHistory implements Action {
     Object lock = getNodeLock(nodeName);
     synchronized (lock) {
       List<String> indexLines = new ArrayList<>();
-      try (BufferedReader reader = new BufferedReader(new FileReader(STORAGE_DIR + "/" + nodeName + "_index.txt"))) {
+      try (BufferedReader reader = new BufferedReader(new FileReader(getStorageDir() + "/" + nodeName + "_index.txt"))) {
         String line;
         while ((line = reader.readLine()) != null) {
           if (!line.endsWith(",DELETED")) { // Skip deleted entries
@@ -138,6 +132,7 @@ public class AgentBuildHistory implements Action {
         }
       } catch (IOException e) {
         LOGGER.log(Level.WARNING, "Failed to read index file for node " + nodeName, e);
+        return Collections.emptyList();
       }
       return indexLines;
     }
@@ -149,7 +144,7 @@ public class AgentBuildHistory implements Action {
     synchronized (lock) {
       LOGGER.info("Loading execution for job: " + jobName + ", build: " + buildNumber + " from node: " + nodeName);
       try (ObjectInputStream ois = new ObjectInputStream(
-              new FileInputStream(STORAGE_DIR + "/" + nodeName + "_executions.ser"))) {
+              new FileInputStream(getStorageDir() + "/" + nodeName + "_executions.ser"))) {
         while (true) {
           try {
             AgentExecution execution = (AgentExecution) ois.readObject();
@@ -176,7 +171,7 @@ public class AgentBuildHistory implements Action {
         LOGGER.info("Running periodic cleanup for node: " + nodeName);
         rewriteExecutionFile(nodeName);
       }
-    }, 10, 10, TimeUnit.MINUTES); // Runs cleanup every 10 minutes
+    }, getDeleteIntervalInMinutes(), getDeleteIntervalInMinutes(), TimeUnit.MINUTES); // Runs cleanup every 10 minutes
   }
 
   private static void rewriteExecutionFile(String nodeName) {
@@ -188,7 +183,7 @@ public class AgentBuildHistory implements Action {
 
       while (currentBatchStart < indexLines.size()) {
         List<AgentExecution> batchExecutions = new ArrayList<>();
-        int currentBatchEnd = Math.min(currentBatchStart + BATCH_SIZE, indexLines.size());
+        int currentBatchEnd = Math.min(currentBatchStart + getBatchSize(), indexLines.size());
         List<String> batchLines = indexLines.subList(currentBatchStart, currentBatchEnd);
 
         // Read and process the current batch
@@ -212,14 +207,14 @@ public class AgentBuildHistory implements Action {
       }
 
       // Replace the original files with the temporary files
-      File tempFile = new File(STORAGE_DIR + "/" + nodeName + "_executions_tmp.ser");
-      File originalFile = new File(STORAGE_DIR + "/" + nodeName + "_executions.ser");
+      File tempFile = new File(getStorageDir() + "/" + nodeName + "_executions_tmp.ser");
+      File originalFile = new File(getStorageDir() + "/" + nodeName + "_executions.ser");
       if (!tempFile.renameTo(originalFile)) {
         LOGGER.log(Level.WARNING, "Failed to replace the original executions file for node " + nodeName);
       }
 
-      File tempIndexFile = new File(STORAGE_DIR + "/" + nodeName + "_index_tmp.txt");
-      File originalIndexFile = new File(STORAGE_DIR + "/" + nodeName + "_index.txt");
+      File tempIndexFile = new File(getStorageDir() + "/" + nodeName + "_index_tmp.txt");
+      File originalIndexFile = new File(getStorageDir() + "/" + nodeName + "_index.txt");
       if (!tempIndexFile.renameTo(originalIndexFile)) {
         LOGGER.log(Level.WARNING, "Failed to replace the original index file for node " + nodeName);
       }
@@ -229,7 +224,7 @@ public class AgentBuildHistory implements Action {
   private static Set<String> getAllSavedNodeNames() {
     Set<String> nodeNames = new HashSet<>();
 
-    File storageDir = new File(STORAGE_DIR);
+    File storageDir = new File(getStorageDir());
     File[] files = storageDir.listFiles((dir, name) -> name.endsWith("_index.txt"));
 
     if (files != null) {
@@ -274,7 +269,7 @@ public class AgentBuildHistory implements Action {
           Object lock = getNodeLock(nodeName);
           synchronized (lock) {
             List<String> indexLines = readIndexFile(nodeName);
-            try (BufferedWriter writer = new BufferedWriter(new FileWriter(STORAGE_DIR + "/" + nodeName + "_index.txt"))) {
+            try (BufferedWriter writer = new BufferedWriter(new FileWriter(getStorageDir() + "/" + nodeName + "_index.txt"))) {
               for (String line : indexLines) {
                 if (line.startsWith(jobName + ",")) {
                   writer.write(line + ",DELETED"); // Mark as deleted
@@ -303,13 +298,13 @@ public class AgentBuildHistory implements Action {
       Object lock = getNodeLock(nodeName);
       synchronized (lock) {
         // Delete the index file for the node
-        File indexFile = new File(STORAGE_DIR + "/" + nodeName + "_index.txt");
+        File indexFile = new File(getStorageDir() + "/" + nodeName + "_index.txt");
         if (indexFile.exists() && !indexFile.delete()) {
           LOGGER.log(Level.WARNING, "Failed to delete index file for node: " + nodeName);
         }
 
         // Delete the serialized executions file for the node
-        File executionsFile = new File(STORAGE_DIR + "/" + nodeName + "_executions.ser");
+        File executionsFile = new File(getStorageDir() + "/" + nodeName + "_executions.ser");
         if (executionsFile.exists() && !executionsFile.delete()) {
           LOGGER.log(Level.WARNING, "Failed to delete executions file for node: " + nodeName);
         }
@@ -321,7 +316,7 @@ public class AgentBuildHistory implements Action {
 
   // Helper method to check if there is existing content in STORAGE_DIR
   private boolean hasExistingContent() {
-    File storageDir = new File(STORAGE_DIR);
+    File storageDir = new File(getStorageDir());
     File[] files = storageDir.listFiles((dir, name) -> name.endsWith("_executions.ser") || name.endsWith("_index.txt"));
 
     if (files != null) {
@@ -369,9 +364,9 @@ public class AgentBuildHistory implements Action {
     //Get Parameters from URL
     StaplerRequest req = Stapler.getCurrentRequest();
     int page = req.getParameter("page") != null ? Integer.parseInt(req.getParameter("page")) : 1;
-    int pageSize = req.getParameter("pageSize") != null ? Integer.parseInt(req.getParameter("pageSize")) : DEFAULT_LIMIT;
-    String sortColumn = req.getParameter("sortColumn") != null ? req.getParameter("sortColumn") : "startTime";
-    String sortOrder = req.getParameter("sortOrder") != null ? req.getParameter("sortOrder") : "desc";
+    int pageSize = req.getParameter("pageSize") != null ? Integer.parseInt(req.getParameter("pageSize")) : getEntriesPerPage();
+    String sortColumn = req.getParameter("sortColumn") != null ? req.getParameter("sortColumn") : getDefaultSortColumn();
+    String sortOrder = req.getParameter("sortOrder") != null ? req.getParameter("sortOrder") : getDefaultSortOrder();
     //Update totalPages depending on pageSize
     int totalEntries = readIndexFile(computer.getName()).size();
     totalPages = (int) Math.ceil((double) totalEntries / pageSize);
@@ -461,7 +456,10 @@ public class AgentBuildHistory implements Action {
 
   public List<AgentExecution> getExecutionsForNode(String nodeName, int start, int limit, String sortColumn, String sortOrder) {
     List<AgentExecution> result = new ArrayList<>();
-    List<String> indexLines = readIndexFile(nodeName); //TODO when loading the first time, it cant find this file and throws an error java.io.FileNotFoundException: handle this case
+    List<String> indexLines = readIndexFile(nodeName);
+    if (indexLines.isEmpty()) {
+      return result;
+    }
 
     // Sort index lines based on start time (or other criteria)
     indexLines.sort((a, b) -> {
@@ -528,6 +526,30 @@ public class AgentBuildHistory implements Action {
 
     // Save the updated or new execution back to disk
     appendAndIndexExecution(nodeName, exec, false);//TODO is it writing a new entry? or updating the existing one? If writing new at least mark the old one as Deleted
+  }
+
+  private static int getBatchSize(){
+    return AgentBuildHistoryConfig.get().getDeleteBatchSize();
+  }
+
+  public static int getEntriesPerPage(){
+    return AgentBuildHistoryConfig.get().getEntriesPerPage();
+  }
+
+  private static int getDeleteIntervalInMinutes(){
+    return AgentBuildHistoryConfig.get().getDeleteIntervalInMinutes();
+  }
+
+  public static String getDefaultSortColumn(){
+    return AgentBuildHistoryConfig.get().getDefaultSortColumn();
+  }
+
+  public static String getDefaultSortOrder(){
+    return AgentBuildHistoryConfig.get().getDefaultSortOrder();
+  }
+
+  private static String getStorageDir(){
+    return AgentBuildHistoryConfig.get().getStorageDir();
   }
 
   @Override
