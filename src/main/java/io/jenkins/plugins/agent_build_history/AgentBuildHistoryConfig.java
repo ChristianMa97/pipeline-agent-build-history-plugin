@@ -35,7 +35,15 @@ public class AgentBuildHistoryConfig extends GlobalConfiguration {
         File storageDirectory = new File(storageDir);
         if (!storageDirectory.exists()) {
             LOGGER.info("Creating storage directory at " + storageDir);
-            storageDirectory.mkdirs();
+            try {
+                boolean created = storageDirectory.mkdirs();
+                if (!created) {
+                    LOGGER.severe("Failed to create storage directory at " + storageDir);
+                }
+            } catch (SecurityException e) {
+                LOGGER.severe("Failed to create storage directory at " + storageDir);
+                throw new SecurityException(e); //TODO dont crash the plugin
+            }
         } else {
             LOGGER.info("Storage directory already exists at " + storageDir);
         }
