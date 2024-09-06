@@ -17,18 +17,13 @@ public class AgentBuildHistoryConfig extends GlobalConfiguration {
     private static final Logger LOGGER = Logger.getLogger(AgentBuildHistoryConfig.class.getName());
 
     private String storageDir = "/var/jenkins_home/serialized_data";
-    private int deleteBatchSize = 20;
     private int entriesPerPage = 20;
     private String defaultSortColumn = "startTime";
     private String defaultSortOrder = "desc";
-    private int deleteIntervalInMinutes = 60;
-
-    private static ScheduledFuture<?> cleanupTask; // Reference to the scheduled cleanup task
 
     public AgentBuildHistoryConfig() {
         load(); // Load the persisted configuration
         ensureStorageDir();
-        schedulePeriodicCleanup();
     }
 
     private void ensureStorageDir() {
@@ -49,22 +44,6 @@ public class AgentBuildHistoryConfig extends GlobalConfiguration {
         }
     }
 
-    private void schedulePeriodicCleanup() {
-        // Cancel the existing task if it is running
-        if (cleanupTask != null && !cleanupTask.isCancelled()) {
-            cleanupTask.cancel(true); // Cancel the old task
-            LOGGER.info("Canceled existing cleanup task.");
-        }
-        cleanupTask = Timer.get().scheduleAtFixedRate(() -> {
-            Set<String> nodeNames = BuildHistoryFileManager.getAllSavedNodeNames(storageDir);
-            for (String nodeName : nodeNames) {
-                LOGGER.info("Running periodic cleanup for node: " + nodeName);
-                BuildHistoryFileManager.rewriteExecutionFile(nodeName, storageDir, getDeleteBatchSize());
-            }
-        }, deleteIntervalInMinutes, deleteIntervalInMinutes, TimeUnit.MINUTES);
-        LOGGER.info("Scheduled new cleanup task with interval: " + deleteIntervalInMinutes + " minutes.");
-    }
-
     public String getStorageDir() {
         return storageDir;
     }
@@ -75,20 +54,9 @@ public class AgentBuildHistoryConfig extends GlobalConfiguration {
             LOGGER.info("Changing storage directory from " + this.storageDir + " to " + storageDir);
             this.storageDir = storageDir;
             ensureStorageDir();
-            schedulePeriodicCleanup();
             AgentBuildHistory.setLoaded(false);
             save(); // Save the configuration
         }
-    }
-
-    public int getDeleteBatchSize() {
-        return deleteBatchSize;
-    }
-
-    @DataBoundSetter
-    public void setDeleteBatchSize(int deleteBatchSize) {
-        this.deleteBatchSize = deleteBatchSize;
-        save(); // Save the configuration
     }
 
     public int getEntriesPerPage() {
@@ -124,16 +92,6 @@ public class AgentBuildHistoryConfig extends GlobalConfiguration {
     // Static method to access the configuration instance
     public static AgentBuildHistoryConfig get() {
         return GlobalConfiguration.all().get(AgentBuildHistoryConfig.class);
-    }
-
-    public int getDeleteIntervalInMinutes() {
-        return deleteIntervalInMinutes;
-    }
-    @DataBoundSetter
-    public void setDeleteIntervalInMinutes(int deleteIntervalInMinutes) {
-        this.deleteIntervalInMinutes = deleteIntervalInMinutes;
-        schedulePeriodicCleanup();
-        save();
     }
 
     public ListBoxModel doFillDefaultSortColumnItems() {

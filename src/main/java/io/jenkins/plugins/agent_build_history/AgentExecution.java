@@ -28,7 +28,7 @@ import org.kohsuke.accmod.restrictions.NoExternalUse;
 @Restricted(NoExternalUse.class)
 public class AgentExecution implements Comparable<AgentExecution>, Serializable {
   private static final long serialVersionUID = 1L;
-  private final String jobName;
+  private String jobName;
   private final int buildNumber;
   private final long startTimeInMillis;
   private transient Run<?, ?> run;
@@ -60,6 +60,10 @@ public class AgentExecution implements Comparable<AgentExecution>, Serializable 
 
   public String getJobName() {
     return jobName;
+  }
+
+  public void setJobName(String jobName) {
+    this.jobName = jobName;
   }
 
   public int getBuildNumber() {
@@ -208,6 +212,10 @@ public class AgentExecution implements Comparable<AgentExecution>, Serializable 
       return nodeName;
     }
 
+    public void setNodeName(String nodeName) {
+      this.nodeName = nodeName;
+    }
+
     public Status getFlowNodeStatus() {
       long endTime = getNodeTime(getEndNode());
       if (endTime == 0) {
@@ -251,7 +259,7 @@ public class AgentExecution implements Comparable<AgentExecution>, Serializable 
     }
   }
 
-  public enum Status {
+  public enum Status implements Serializable{
     UNKNOWN(false, Messages.Unknown()),
     SUCCESS(false, Messages.Success()),
     RUNNING(false, Messages.StillRunning()),

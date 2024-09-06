@@ -22,8 +22,9 @@ import java.util.logging.Logger;
 
 @Extension
 @Restricted(NoExternalUse.class)
-public class AgentBuildHistoryListeners {
+public class AgentBuildHistoryListeners {//TODO
     private static final Logger LOGGER = Logger.getLogger(AgentBuildHistoryListeners.class.getName());
+
     @Extension
     public static class HistoryRunListener extends RunListener<Run<?, ?>> {
 
@@ -33,7 +34,7 @@ public class AgentBuildHistoryListeners {
             int buildNumber = run.getNumber();
             Set<String> nodeNames = BuildHistoryFileManager.getAllSavedNodeNames(AgentBuildHistoryConfig.get().getStorageDir());
             for (String nodeName : nodeNames) {
-                BuildHistoryFileManager.markExecutionAsDeleted(nodeName, jobName, buildNumber, AgentBuildHistoryConfig.get().getStorageDir());
+                BuildHistoryFileManager.deleteExecution(nodeName, jobName, buildNumber, AgentBuildHistoryConfig.get().getStorageDir());
             }
         }
     }
@@ -46,25 +47,15 @@ public class AgentBuildHistoryListeners {
             if (item instanceof Job) {
                 Job<?, ?> job = (Job<?, ?>) item;
                 String jobName = job.getFullName();
-                Set<String> nodeNames = BuildHistoryFileManager.getAllSavedNodeNames(AgentBuildHistoryConfig.get().getStorageDir());
-                for (String nodeName : nodeNames) {
-                    Object lock = BuildHistoryFileManager.getNodeLock(nodeName);
-                    synchronized (lock) {
-                        List<String> indexLines = BuildHistoryFileManager.readIndexFile(nodeName, AgentBuildHistoryConfig.get().getStorageDir());
-                        try (BufferedWriter writer = new BufferedWriter(new FileWriter(AgentBuildHistoryConfig.get().getStorageDir() + "/" + nodeName + "_index.txt"))) {
-                            for (String line : indexLines) {
-                                if (line.startsWith(jobName + ",")) {
-                                    writer.write(line + ",DELETED");
-                                } else {
-                                    writer.write(line);
-                                }
-                                writer.newLine();
-                            }
-                        } catch (IOException e) {
-                            LOGGER.log(Level.WARNING, "Failed to update index for node " + nodeName, e);
-                        }
-                    }
-                }
+                BuildHistoryFileManager.deleteJobSerialization(jobName, AgentBuildHistoryConfig.get().getStorageDir());
+            }
+        }
+        @Override
+        public void onLocationChanged(Item item, String oldFullName, String newFullName){
+            if (item instanceof Job){
+                Job<?, ?> job = (Job<?, ?>) item;
+                LOGGER.info("Job renamed from " + oldFullName + " to " + newFullName);
+                BuildHistoryFileManager.renameJob(oldFullName, newFullName, AgentBuildHistoryConfig.get().getStorageDir());
             }
         }
     }
@@ -75,7 +66,17 @@ public class AgentBuildHistoryListeners {
         @Override
         protected void onDeleted(@NonNull Node node) {
             String nodeName = node.getNodeName();
-            BuildHistoryFileManager.deleteNodeFiles(nodeName, AgentBuildHistoryConfig.get().getStorageDir());
+            BuildHistoryFileManager.deleteNodeSerializations(nodeName, AgentBuildHistoryConfig.get().getStorageDir());
+        }
+
+        @Override
+        protected void onUpdated(@NonNull Node oldOne, @NonNull Node newOne) {
+            String oldNodeName = oldOne.getNodeName();
+            String newNodeName = newOne.getNodeName();
+
+            if(!oldNodeName.equals(newNodeName)){
+                BuildHistoryFileManager.renameNodeFiles(oldNodeName, newNodeName, AgentBuildHistoryConfig.get().getStorageDir());
+            }
         }
     }
 

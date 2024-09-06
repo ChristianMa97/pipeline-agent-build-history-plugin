@@ -65,11 +65,11 @@ public class AgentBuildHistory implements Action {
     return totalPages;
   }
 
-  // Helper method to check if there is existing content in STORAGE_DIR //TODO
+  // Helper method to check if there is existing content in STORAGE_DIR
   private boolean hasExistingContent() {
     String storageDir = AgentBuildHistoryConfig.get().getStorageDir();
     File dir = new File(storageDir);
-    File[] files = dir.listFiles((d, name) -> name.endsWith("_executions.ser") || name.endsWith("_index.txt"));
+    File[] files = dir.listFiles((d, name) -> name.endsWith(".ser") || name.endsWith("_index.txt"));
     return files != null && files.length > 0;
   }
 
@@ -160,7 +160,7 @@ public class AgentBuildHistory implements Action {
         Node node = ((AbstractBuild<?, ?>) run).getBuiltOn();
         if (node != null) {
           LOGGER.info("Loading AbstractBuild on node: " + node.getNodeName());
-          BuildHistoryFileManager.appendAndIndexExecution(node.getNodeName(), execution, AgentBuildHistoryConfig.get().getStorageDir());
+          BuildHistoryFileManager.serializeExecution(node.getNodeName(), execution, AgentBuildHistoryConfig.get().getStorageDir());
         }
       } else if (run instanceof WorkflowRun) {
         WorkflowRun wfr = (WorkflowRun) run;
@@ -178,7 +178,7 @@ public class AgentBuildHistory implements Action {
                 String nodeName = action.getNode();
                 execution.addFlowNode(flowNode, nodeName);
                 LOGGER.info("Loading WorkflowRun FlowNode on node: " + nodeName);
-                BuildHistoryFileManager.appendAndIndexExecution(nodeName, execution, AgentBuildHistoryConfig.get().getStorageDir());
+                BuildHistoryFileManager.serializeExecution(nodeName, execution, AgentBuildHistoryConfig.get().getStorageDir());
               }
             }
           }
@@ -191,7 +191,7 @@ public class AgentBuildHistory implements Action {
 
   public static void startJobExecution(Computer c, Run<?, ?> run) {
     AgentExecution execution = new AgentExecution(run);
-    BuildHistoryFileManager.appendAndIndexExecution(c.getName(), execution, AgentBuildHistoryConfig.get().getStorageDir());
+    BuildHistoryFileManager.serializeExecution(c.getName(), execution, AgentBuildHistoryConfig.get().getStorageDir());
   }
 
   public static void startFlowNodeExecution(Computer c, WorkflowRun run, FlowNode node) {
@@ -210,7 +210,7 @@ public class AgentBuildHistory implements Action {
     exec.addFlowNode(node, nodeName);
 
     // Save the updated or new execution back to disk
-    BuildHistoryFileManager.appendAndIndexExecution(nodeName, exec, AgentBuildHistoryConfig.get().getStorageDir());//TODO is it writing a new entry? or updating the existing one? If writing new at least mark the old one as Deleted
+    BuildHistoryFileManager.serializeExecution(nodeName, exec, AgentBuildHistoryConfig.get().getStorageDir());
   }
   /*
   used by jelly
