@@ -3,18 +3,14 @@ package io.jenkins.plugins.agent_build_history;
 import edu.umd.cs.findbugs.annotations.CheckForNull;
 import edu.umd.cs.findbugs.annotations.NonNull;
 import hudson.Util;
-import hudson.model.Job;
 import hudson.model.Run;
 import java.io.IOException;
-import java.io.Serializable;
 import java.util.Collections;
 import java.util.Date;
 import java.util.GregorianCalendar;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
-
-import jenkins.model.Jenkins;
 import org.jenkinsci.plugins.workflow.actions.ErrorAction;
 import org.jenkinsci.plugins.workflow.actions.TimingAction;
 import org.jenkinsci.plugins.workflow.flow.FlowExecution;
@@ -26,52 +22,18 @@ import org.kohsuke.accmod.Restricted;
 import org.kohsuke.accmod.restrictions.NoExternalUse;
 
 @Restricted(NoExternalUse.class)
-public class AgentExecution implements Comparable<AgentExecution>, Serializable {
-  private static final long serialVersionUID = 1L;
-  private String jobName;
-  private final int buildNumber;
-  private final long startTimeInMillis;
-  private transient Run<?, ?> run;
+public class AgentExecution implements Comparable<AgentExecution> {
+
+  private final Run<?, ?> run;
   private final Set<FlowNodeExecution> flowNodes = Collections.synchronizedSet(new TreeSet<>());
 
   public AgentExecution(Run<?, ?> run) {
     this.run = run;
-    jobName = run.getParent().getFullName();
-    buildNumber = run.getNumber();
-    startTimeInMillis = run.getStartTimeInMillis();
   }
 
   @NonNull
   public Run<?, ?> getRun() {
-    // Lazy-load the Run object if it's not already loaded
-    if (run == null) {
-      run = loadRun();
-    }
     return run;
-  }
-
-  private Run<?, ?> loadRun() {
-    Job<?, ?> job = Jenkins.get().getItemByFullName(jobName, Job.class);
-    if (job != null) {
-      return job.getBuildByNumber(buildNumber);
-    }
-    return null; // Handle cases where the run cannot be found
-  }
-
-  public String getJobName() {
-    return jobName;
-  }
-
-  public void setJobName(String jobName) {
-    this.jobName = jobName;
-  }
-
-  public int getBuildNumber() {
-    return buildNumber;
-  }
-
-  public long getStartTimeInMillis() {
-    return startTimeInMillis;
   }
 
   public void addFlowNode(FlowNode node, String nodeName) {
@@ -113,15 +75,14 @@ public class AgentExecution implements Comparable<AgentExecution>, Serializable 
    */
   @Override
   public int compareTo(AgentExecution o) {
-    int compare = Long.compare(o.getStartTimeInMillis(), getStartTimeInMillis());
+    int compare = Long.compare(o.run.getStartTimeInMillis(), run.getStartTimeInMillis());
     if (compare == 0) {
       return o.run.getFullDisplayName().compareToIgnoreCase(run.getFullDisplayName());
     }
     return compare;
   }
 
-  public class FlowNodeExecution implements Comparable<FlowNodeExecution>, Serializable {
-    private static final long serialVersionUID = 1L;
+  public class FlowNodeExecution implements Comparable<FlowNodeExecution> {
     private final String nodeId;
     private Status status;
 
@@ -212,10 +173,6 @@ public class AgentExecution implements Comparable<AgentExecution>, Serializable 
       return nodeName;
     }
 
-    public void setNodeName(String nodeName) {
-      this.nodeName = nodeName;
-    }
-
     public Status getFlowNodeStatus() {
       long endTime = getNodeTime(getEndNode());
       if (endTime == 0) {
@@ -259,7 +216,7 @@ public class AgentExecution implements Comparable<AgentExecution>, Serializable 
     }
   }
 
-  public enum Status implements Serializable{
+  public enum Status {
     UNKNOWN(false, Messages.Unknown()),
     SUCCESS(false, Messages.Success()),
     RUNNING(false, Messages.StillRunning()),

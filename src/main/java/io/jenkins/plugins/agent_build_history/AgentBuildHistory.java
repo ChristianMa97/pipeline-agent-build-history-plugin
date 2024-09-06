@@ -69,7 +69,7 @@ public class AgentBuildHistory implements Action {
   private boolean hasExistingContent() {
     String storageDir = AgentBuildHistoryConfig.get().getStorageDir();
     File dir = new File(storageDir);
-    File[] files = dir.listFiles((d, name) -> name.endsWith(".ser") || name.endsWith("_index.txt"));
+    File[] files = dir.listFiles((d, name) -> name.endsWith("_index.txt"));
     return files != null && files.length > 0;
   }
 
@@ -105,6 +105,7 @@ public class AgentBuildHistory implements Action {
   public List<AgentExecution> getExecutionsForNode(String nodeName, int start, int limit, String sortColumn, String sortOrder) {
     String storageDir = AgentBuildHistoryConfig.get().getStorageDir();
     List<String> indexLines = BuildHistoryFileManager.readIndexFile(nodeName, storageDir);
+    LOGGER.info("Found " + indexLines.size() + " entries for node " + nodeName);
     if (indexLines.isEmpty()) {
       return List.of();
     }
@@ -141,30 +142,37 @@ public class AgentBuildHistory implements Action {
       String jobName = parts[0];
       int buildNumber = Integer.parseInt(parts[1]);
       // Load execution using deserialization
-      AgentExecution execution = BuildHistoryFileManager.loadAgentExecution(nodeName, jobName, buildNumber, storageDir);
+      AgentExecution execution = loadSingleExecution(jobName, buildNumber);
       if (execution != null) {
         result.add(execution);
       }
     }
+    LOGGER.info("Returning " + result.size() + " entries for node " + nodeName);
     return result;
   }
 
-  private static void load() {
-    LOGGER.log(Level.INFO, () -> "Starting to load all runs");
-    RunList<Run<?, ?>> runList = RunList.fromJobs((Iterable) Jenkins.get().allItems(Job.class));
-    runList.forEach(run -> {
+    public static AgentExecution loadSingleExecution(String jobName, int buildNumber) {
+      Job<?, ?> job = Jenkins.get().getItemByFullName(jobName, Job.class);
+      Run<?, ?> run = null;
+      if (job != null) {
+        run = job.getBuildByNumber(buildNumber);
+      }
+      if (run == null) {
+          LOGGER.warning("Run not found for " + jobName + " #" + buildNumber);
+          return null;
+      }
       LOGGER.info("Loading run " + run.getFullDisplayName());
       AgentExecution execution = new AgentExecution(run);
 
       if (run instanceof AbstractBuild) {
         Node node = ((AbstractBuild<?, ?>) run).getBuiltOn();
         if (node != null) {
-          LOGGER.info("Loading AbstractBuild on node: " + node.getNodeName());
-          BuildHistoryFileManager.serializeExecution(node.getNodeName(), execution, AgentBuildHistoryConfig.get().getStorageDir());
+          LOGGER.config("Loading AbstractBuild on node: " + node.getNodeName());
+          return execution;
         }
       } else if (run instanceof WorkflowRun) {
         WorkflowRun wfr = (WorkflowRun) run;
-        LOGGER.info("Loading WorkflowRun: " + wfr.getFullDisplayName());
+        LOGGER.config("Loading WorkflowRun: " + wfr.getFullDisplayName());
         FlowExecution flowExecution = wfr.getExecution();
         if (flowExecution != null) {
           for (FlowNode flowNode : new DepthFirstScanner().allNodes(flowExecution)) {
@@ -177,8 +185,40 @@ public class AgentBuildHistory implements Action {
               if (descriptor instanceof ExecutorStep.DescriptorImpl) {
                 String nodeName = action.getNode();
                 execution.addFlowNode(flowNode, nodeName);
-                LOGGER.info("Loading WorkflowRun FlowNode on node: " + nodeName);
-                BuildHistoryFileManager.serializeExecution(nodeName, execution, AgentBuildHistoryConfig.get().getStorageDir());
+                LOGGER.config("Loading WorkflowRun FlowNode on node: " + nodeName);
+              }
+            }
+          }
+        }
+      }
+      return execution;
+    }
+
+  private static void load() {
+    LOGGER.log(Level.INFO, () -> "Starting to load all runs");
+    RunList<Run<?, ?>> runList = RunList.fromJobs((Iterable) Jenkins.get().allItems(Job.class));
+    runList.forEach(run -> {
+      LOGGER.config("Loading run " + run.getFullDisplayName());
+
+      if (run instanceof AbstractBuild) {
+        Node node = ((AbstractBuild<?, ?>) run).getBuiltOn();
+        if (node != null) {
+          BuildHistoryFileManager.addRunToNodeIndex(node.getNodeName(), run, AgentBuildHistoryConfig.get().getStorageDir());
+        }
+      } else if (run instanceof WorkflowRun) {
+        WorkflowRun wfr = (WorkflowRun) run;
+        FlowExecution flowExecution = wfr.getExecution();
+        if (flowExecution != null) {
+          for (FlowNode flowNode : new DepthFirstScanner().allNodes(flowExecution)) {
+            if (! (flowNode instanceof StepStartNode)) {
+              continue;
+            }
+            for (WorkspaceActionImpl action : flowNode.getActions(WorkspaceActionImpl.class)) {
+              StepStartNode startNode = (StepStartNode) flowNode;
+              StepDescriptor descriptor = startNode.getDescriptor();
+              if (descriptor instanceof ExecutorStep.DescriptorImpl) {
+                String nodeName = action.getNode();
+                BuildHistoryFileManager.addRunToNodeIndex(nodeName, run, AgentBuildHistoryConfig.get().getStorageDir());
               }
             }
           }
@@ -190,27 +230,11 @@ public class AgentBuildHistory implements Action {
   }
 
   public static void startJobExecution(Computer c, Run<?, ?> run) {
-    AgentExecution execution = new AgentExecution(run);
-    BuildHistoryFileManager.serializeExecution(c.getName(), execution, AgentBuildHistoryConfig.get().getStorageDir());
+    BuildHistoryFileManager.addRunToNodeIndex(c.getName(), run, AgentBuildHistoryConfig.get().getStorageDir());
   }
 
   public static void startFlowNodeExecution(Computer c, WorkflowRun run, FlowNode node) {
-    String jobName = run.getParent().getFullName();
-    int buildNumber = run.getNumber();
-    String nodeName = c.getName();
-
-    // Attempt to load the existing AgentExecution from disk
-    AgentExecution exec = BuildHistoryFileManager.loadAgentExecution(nodeName, jobName, buildNumber, AgentBuildHistoryConfig.get().getStorageDir());
-
-    if (exec == null) {
-      // If no existing AgentExecution, create a new one
-      exec = new AgentExecution(run);
-    }
-    // Add the FlowNode to the execution (either new or loaded)
-    exec.addFlowNode(node, nodeName);
-
-    // Save the updated or new execution back to disk
-    BuildHistoryFileManager.serializeExecution(nodeName, exec, AgentBuildHistoryConfig.get().getStorageDir());
+    BuildHistoryFileManager.addRunToNodeIndex(c.getName(), run, AgentBuildHistoryConfig.get().getStorageDir());
   }
   /*
   used by jelly

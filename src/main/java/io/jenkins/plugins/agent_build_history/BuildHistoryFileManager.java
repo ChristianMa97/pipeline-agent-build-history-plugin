@@ -1,6 +1,6 @@
 package io.jenkins.plugins.agent_build_history;
 
-import org.jenkinsci.plugins.workflow.flow.FlowExecution;
+import hudson.model.Run;
 
 import java.io.*;
 import java.util.*;
@@ -20,7 +20,7 @@ public class BuildHistoryFileManager {
         }
     }
 
-    // Reads the index file for a given node and returns the list of non-deleted lines
+    // Reads the index file for a given node and returns the list of lines
     public static List<String> readIndexFile(String nodeName, String storageDir) {
         Object lock = getNodeLock(nodeName);
         synchronized (lock) {
@@ -42,52 +42,22 @@ public class BuildHistoryFileManager {
         }
     }
 
-    // Appends a new execution entry and updates the index
-    public static void serializeExecution(String nodeName, AgentExecution execution, String storageDir) { //TODO see if the job build combo is in the index file already if so, don't append it again
+    // Appends a new run entry and updates the index
+    public static void addRunToNodeIndex(String nodeName, Run<?, ?> run, String storageDir) {
         Object lock = getNodeLock(nodeName);
         synchronized (lock) {
-            String fileName = nodeName + "_" + execution.getJobName() + "_" + execution.getBuildNumber() + ".ser";
-
-            File file = new File(storageDir + "/" + fileName);
-            boolean alreadySerialized = file.exists();
-            try (FileOutputStream fos = new FileOutputStream(file);
-                 ObjectOutputStream oos =  new ObjectOutputStream(fos)) {
-                oos.writeObject(execution);
-            } catch (IOException e) {
-                LOGGER.log(Level.WARNING, "Failed to append execution for node " + nodeName, e);
-            }
-
-
             // Update index for the node
             File indexFile = new File(storageDir + "/" + nodeName + "_index" + ".txt");
-            if (!alreadySerialized) { //If it was serialized before already, it is contained in the index File already
+            List<String> lines = readIndexFile(nodeName, storageDir);
+            boolean exists = lines.contains(run.getParent().getFullName() + "," + run.getNumber() + "," + run.getStartTimeInMillis());
+            if (!exists) {
                 try (BufferedWriter writer = new BufferedWriter(new FileWriter(indexFile, true))) {
-                    writer.write(execution.getJobName() + "," + execution.getBuildNumber() + "," + execution.getStartTimeInMillis());
+                    writer.write(run.getParent().getFullName() + "," + run.getNumber() + "," + run.getStartTimeInMillis());
                     writer.newLine();
                 } catch (IOException e) {
                     LOGGER.log(Level.WARNING, "Failed to update index for node " + nodeName, e);
                 }
             }
-        }
-    }
-
-    // Load an AgentExecution by deserializing from disk
-    public static AgentExecution loadAgentExecution(String nodeName, String jobName, int buildNumber, String storageDir) {
-        Object lock = getNodeLock(nodeName);
-        synchronized (lock) {
-            String fileName = nodeName + "_" + jobName + "_" + buildNumber + ".ser";
-            File executionFile = new File(storageDir + "/" + fileName);
-            if (!executionFile.exists()) {
-                return null;
-            }
-            try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(executionFile))) {
-                AgentExecution execution = (AgentExecution) ois.readObject();
-                    LOGGER.log(Level.INFO, () -> "Loaded execution for node " + nodeName + " job " + jobName + " build " + buildNumber +" with " + execution.getFlowNodes().size() + " flow nodes");
-                    return execution;
-            } catch (IOException | ClassNotFoundException e) {
-                LOGGER.log(Level.WARNING, "Failed to load execution for node " + nodeName, e);
-            }
-            return null;
         }
     }
 
@@ -111,26 +81,17 @@ public class BuildHistoryFileManager {
     public static void deleteExecution(String nodeName, String jobName, int buildNumber, String storageDir) {
         Object lock = getNodeLock(nodeName);
         synchronized (lock) {
-            String fileName = nodeName + "_" + jobName + "_" + buildNumber + ".ser";
-            File executionFile = new File(storageDir + "/" + fileName);
-            if (executionFile.exists()) {
-                if (!executionFile.delete()) {
-                    LOGGER.log(Level.WARNING, "Failed to delete execution file: " + executionFile.getName());
-                } else {
-                    LOGGER.log(Level.INFO, "Deleted execution file: " + executionFile.getName());
-                }
-                List<String> indexLines = readIndexFile(nodeName, storageDir);
-                File indexFile = new File(storageDir + "/" + nodeName + "_index.txt");
-                try (BufferedWriter writer = new BufferedWriter(new FileWriter(indexFile))) {
-                    for (String line : indexLines) {
-                        if (!line.startsWith(jobName + "," + buildNumber + ",")) {
-                            writer.write(line);
-                            writer.newLine();
-                        }
+            List<String> indexLines = readIndexFile(nodeName, storageDir);
+            File indexFile = new File(storageDir + "/" + nodeName + "_index.txt");
+            try (BufferedWriter writer = new BufferedWriter(new FileWriter(indexFile))) {
+                for (String line : indexLines) {
+                    if (!line.startsWith(jobName + "," + buildNumber + ",")) {
+                        writer.write(line);
+                        writer.newLine();
                     }
-                } catch (IOException e) {
-                    LOGGER.log(Level.WARNING, "Failed to mark execution as deleted for node " + nodeName, e);
                 }
+            } catch (IOException e) {
+                LOGGER.log(Level.WARNING, "Failed to mark execution as deleted for node " + nodeName, e);
             }
         }
     }
@@ -143,19 +104,7 @@ public class BuildHistoryFileManager {
                 List<String> indexLines = readIndexFile(nodeName, storageDir);
                 try (BufferedWriter writer = new BufferedWriter(new FileWriter(storageDir + "/" + nodeName + "_index.txt"))) {
                     for (String line : indexLines) {
-                        if (line.startsWith(jobName + ",")) {
-                            //delete this file
-                            String[] parts = line.split(",");
-                            String fileName = nodeName + "_" + parts[0] + "_" + parts[1] + ".ser";
-                            File executionFile = new File(storageDir + "/" + fileName);
-                            if (executionFile.exists()) {
-                                if (!executionFile.delete()) {
-                                    LOGGER.log(Level.WARNING, "Failed to delete execution file: " + executionFile.getName());
-                                } else {
-                                    LOGGER.log(Level.INFO, "Deleted execution file: " + executionFile.getName());
-                                }
-                            }
-                        } else {
+                        if (!line.startsWith(jobName + ",")) {
                             writer.write(line);
                             writer.newLine();
                         }
@@ -168,7 +117,7 @@ public class BuildHistoryFileManager {
 
     }
 
-    // Delete all files associated with a node
+    // Delete the index file of a node
     public static void deleteNodeSerializations(String nodeName, String storageDir) {
         Object lock = getNodeLock(nodeName);
         synchronized (lock) {
@@ -176,47 +125,21 @@ public class BuildHistoryFileManager {
             if (indexFile.exists() && !indexFile.delete()) {
                 LOGGER.log(Level.WARNING, "Failed to delete index file for node: " + nodeName);
             }
-            File dir = new File(storageDir);
-            File[] files = dir.listFiles((d, name) -> name.startsWith(nodeName + "_") && name.endsWith(".ser"));
-            if (files != null) {
-                for (File file : files) {
-                    if (!file.delete()) {
-                        LOGGER.log(Level.WARNING, "Failed to delete execution file: " + file.getName());
-                    }
-                }
-            }
-            LOGGER.log(Level.INFO, () -> "Removed all execution data for deleted node: " + nodeName);
         }
     }
 
-    public static void renameNodeFiles(String oldNodeName, String newNodeName, String storageDir) { //TODO change serialized Data as well.
+    public static void renameNodeFiles(String oldNodeName, String newNodeName, String storageDir) {
         Object lock = getNodeLock(oldNodeName);
         synchronized (lock) {
             File oldIndexFile = new File(storageDir + "/" + oldNodeName + "_index.txt");
-            List<String> lines = readIndexFile(oldNodeName, storageDir);
-            for (String line : lines){
-                String jobName = line.split(",")[0];
-                int buildNumber = Integer.parseInt(line.split(",")[1]);
-                AgentExecution execution = loadAgentExecution(oldNodeName, jobName, buildNumber, storageDir);
-                if (execution != null) {
-                    for (AgentExecution.FlowNodeExecution flowNodeExecution: execution.getFlowNodes()){
-                        flowNodeExecution.setNodeName(newNodeName);
-                    }
-                    serializeExecution(newNodeName, execution, storageDir);
-                    File oldExecutionFile = new File(storageDir + "/" + oldNodeName + "_" + jobName + "_" + buildNumber + ".ser");
-                    if (oldExecutionFile.exists() && !oldExecutionFile.delete()) {
-                        LOGGER.log(Level.WARNING, "Failed to delete execution file: " + oldExecutionFile.getName());
-                    }
-                }
+            File newIndexFile = new File(storageDir + "/" + newNodeName + "_index.txt");
+            if (oldIndexFile.exists() && !oldIndexFile.renameTo(newIndexFile)) {
+                LOGGER.log(Level.WARNING, "Failed to rename index file for node: " + oldNodeName);
             }
-            if (!oldIndexFile.delete()){
-                LOGGER.log(Level.WARNING, "Failed to delete old index file for node: " + oldNodeName);
-            }
-            LOGGER.log(Level.INFO, () -> "Renamed all execution data for node: " + oldNodeName + " to " + newNodeName);
         }
     }
 
-    public static void renameJob(String oldFullName, String newFullName, String storageDir) { //TODO change serialization Data as well.
+    public static void renameJob(String oldFullName, String newFullName, String storageDir) {
         Set<String> nodeNames = getAllSavedNodeNames(storageDir);
         for (String nodeName : nodeNames) {
             Object lock = getNodeLock(nodeName);
@@ -225,15 +148,8 @@ public class BuildHistoryFileManager {
                 try (BufferedWriter writer = new BufferedWriter(new FileWriter(storageDir + "/" + nodeName + "_index.txt"))) {
                     for (String line : indexLines) {
                         if (line.startsWith(oldFullName + ",")) {
-                            AgentExecution execution = loadAgentExecution(nodeName, oldFullName, Integer.parseInt(line.split(",")[1]), storageDir);
-                            if (execution != null) {
-                                execution.setJobName(newFullName);
-                                serializeExecution(nodeName, execution, storageDir); //TODO testen ob das funktioniert mit zwei bufferedWritern zur selben Zeit
-                                File oldExecutionFile = new File(storageDir + "/" + nodeName + "_" + oldFullName + "_" + line.split(",")[1] + ".ser");
-                                if(!oldExecutionFile.delete()){
-                                    LOGGER.log(Level.WARNING, "Failed to delete execution file: " + oldExecutionFile.getName());
-                                }
-                            }
+                            writer.write(newFullName + line.substring(oldFullName.length()));
+                            writer.newLine();
                         } else {
                             writer.write(line);
                             writer.newLine();

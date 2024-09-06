@@ -11,11 +11,12 @@ services:
       - "50000:50000"
       - "5005:5005"
     volumes:
-      - jenkins_home:/var/jenkins_home
+      - ./jenkins_data:/var/jenkins_home
       - ./target/pipeline-agent-build-history.hpi:/var/jenkins_home/plugins/pipeline-agent-build-history.hpi
-      - /mnt/c/CA/Vector_Root_CA_2.0.crt:/usr/local/share/ca-certificates/Vector_Root_CA_2.0.crt
+      - /mnt/c/CA/Vector_Root_CA_2.0.crt:/usr/local/share/ca-certificates/Vector_Root_CA_2.0.crt:ro
     environment:
-      - JAVA_OPTS=-Djenkins.install.runSetupWizard=false -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005
+      - JAVA_OPTS=-Djenkins.install.runSetupWizard=false -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005 -Dhudson.security.csrf.GlobalCrumbIssuerConfiguration.DISABLE_CSRF_PROTECTION=true
+      - JENKINS_OPTS=-Dhudson.security.csrf.GlobalCrumbIssuerConfiguration.DISABLE_CSRF_PROTECTION=true
     entrypoint: >
       /bin/bash -c "
       update-ca-certificates &&
@@ -29,10 +30,11 @@ services:
   jenkins-agent-1:
     image: jenkins/inbound-agent
     container_name: jenkins-agent-1
+    depends_on: [jenkins-master]
     mem_limit: 5g
     environment:
       - JENKINS_URL=http://jenkins-master:8080/
-      - JENKINS_SECRET=d1d48572f3797bc075c45fb0d772f2fe0b30b3f328ef244bb2fa28449e9ef056
+      - JENKINS_SECRET=0245f5232bed7086d932a8142004a748f6f3719ac84c83f15f4dc245a9471002
       - JENKINS_AGENT_NAME=agent-1
     networks:
       - jenkins
@@ -40,10 +42,11 @@ services:
   jenkins-agent-2:
     image: jenkins/inbound-agent
     container_name: jenkins-agent-2
+    depends_on: [jenkins-master]
     mem_limit: 5g
     environment:
       - JENKINS_URL=http://jenkins-master:8080/
-      - JENKINS_SECRET=0e892b435200848218fd3964435a5dbc69f94b762743b578cfb7972ecc074308
+      - JENKINS_SECRET=d6a23da8d25653977fc2ee5f38cf3ba02f475b3f122f845c61316168c713d5db
       - JENKINS_AGENT_NAME=agent-2
     networks:
       - jenkins
