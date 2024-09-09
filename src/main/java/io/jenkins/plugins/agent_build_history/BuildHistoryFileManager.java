@@ -3,6 +3,7 @@ package io.jenkins.plugins.agent_build_history;
 import hudson.model.Run;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -26,7 +27,7 @@ public class BuildHistoryFileManager {
         synchronized (lock) {
             List<String> indexLines = new ArrayList<>();
             File indexFile = new File(storageDir + "/" + nodeName + "_index.txt");
-            try (BufferedReader reader = new BufferedReader(new FileReader(indexFile))) {
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(indexFile), StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
                         indexLines.add(line);
@@ -51,7 +52,7 @@ public class BuildHistoryFileManager {
             List<String> lines = readIndexFile(nodeName, storageDir);
             boolean exists = lines.contains(run.getParent().getFullName() + "," + run.getNumber() + "," + run.getStartTimeInMillis());
             if (!exists) {
-                try (BufferedWriter writer = new BufferedWriter(new FileWriter(indexFile, true))) {
+                try (BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(indexFile, true), StandardCharsets.UTF_8))) {
                     writer.write(run.getParent().getFullName() + "," + run.getNumber() + "," + run.getStartTimeInMillis());
                     writer.newLine();
                 } catch (IOException e) {
@@ -83,7 +84,7 @@ public class BuildHistoryFileManager {
         synchronized (lock) {
             List<String> indexLines = readIndexFile(nodeName, storageDir);
             File indexFile = new File(storageDir + "/" + nodeName + "_index.txt");
-            try (BufferedWriter writer = new BufferedWriter(new FileWriter(indexFile))) {
+            try (BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(indexFile), StandardCharsets.UTF_8))) {
                 for (String line : indexLines) {
                     if (!line.startsWith(jobName + "," + buildNumber + ",")) {
                         writer.write(line);
@@ -102,7 +103,7 @@ public class BuildHistoryFileManager {
             Object lock = getNodeLock(nodeName);
             synchronized (lock) {
                 List<String> indexLines = readIndexFile(nodeName, storageDir);
-                try (BufferedWriter writer = new BufferedWriter(new FileWriter(storageDir + "/" + nodeName + "_index.txt"))) {
+                try (BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(storageDir + "/" + nodeName + "_index.txt"), StandardCharsets.UTF_8))) {
                     for (String line : indexLines) {
                         if (!line.startsWith(jobName + ",")) {
                             writer.write(line);
@@ -145,7 +146,7 @@ public class BuildHistoryFileManager {
             Object lock = getNodeLock(nodeName);
             synchronized (lock) {
                 List<String> indexLines = readIndexFile(nodeName, storageDir);
-                try (BufferedWriter writer = new BufferedWriter(new FileWriter(storageDir + "/" + nodeName + "_index.txt"))) {
+                try (BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(storageDir + "/" + nodeName + "_index.txt"), StandardCharsets.UTF_8))) {
                     for (String line : indexLines) {
                         if (line.startsWith(oldFullName + ",")) {
                             writer.write(newFullName + line.substring(oldFullName.length()));

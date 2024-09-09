@@ -53,7 +53,6 @@ public class AgentBuildHistoryListeners {//TODO
         @Override
         public void onLocationChanged(Item item, String oldFullName, String newFullName){
             if (item instanceof Job){
-                Job<?, ?> job = (Job<?, ?>) item;
                 LOGGER.info("Job renamed from " + oldFullName + " to " + newFullName);
                 BuildHistoryFileManager.renameJob(oldFullName, newFullName, AgentBuildHistoryConfig.get().getStorageDir());
             }
