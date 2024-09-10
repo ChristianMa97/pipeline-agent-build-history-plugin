@@ -33,7 +33,7 @@ public class BuildHistoryFileManager {
                         indexLines.add(line);
                 }
             }catch (FileNotFoundException e) {
-                LOGGER.log(Level.WARNING, "Index file not found for node " + nodeName);
+                LOGGER.log(Level.INFO, "Index file not found for node " + nodeName);
                 return Collections.emptyList();
             } catch (IOException e) {
                 LOGGER.log(Level.WARNING, "Failed to read index file for node " + nodeName, e);
@@ -92,7 +92,7 @@ public class BuildHistoryFileManager {
                     }
                 }
             } catch (IOException e) {
-                LOGGER.log(Level.WARNING, "Failed to mark execution as deleted for node " + nodeName, e);
+                LOGGER.log(Level.WARNING, "Failed to delete Execution for Node: " + nodeName + " job: " + jobName + " build: " + buildNumber, e);
             }
         }
     }
@@ -111,7 +111,7 @@ public class BuildHistoryFileManager {
                         }
                     }
                 } catch (IOException e) {
-                    LOGGER.log(Level.WARNING, "Failed to update index for node " + nodeName, e);
+                    LOGGER.log(Level.WARNING, "Failed to delete job from index-file for job: " + jobName + ", node: " + nodeName, e);
                 }
             }
         }
@@ -135,7 +135,7 @@ public class BuildHistoryFileManager {
             File oldIndexFile = new File(storageDir + "/" + oldNodeName + "_index.txt");
             File newIndexFile = new File(storageDir + "/" + newNodeName + "_index.txt");
             if (oldIndexFile.exists() && !oldIndexFile.renameTo(newIndexFile)) {
-                LOGGER.log(Level.WARNING, "Failed to rename index file for node: " + oldNodeName);
+                LOGGER.log(Level.WARNING, "Failed to rename index file from: " + oldNodeName + " to: " + newNodeName);
             }
         }
     }
@@ -157,7 +157,7 @@ public class BuildHistoryFileManager {
                         }
                     }
                 } catch (IOException e) {
-                    LOGGER.log(Level.WARNING, "Failed to update index for node " + nodeName, e);
+                    LOGGER.log(Level.WARNING, "Failed to rename jobs in index-file in node: " + nodeName, e);
                 }
             }
         }

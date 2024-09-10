@@ -53,7 +53,7 @@ public class AgentBuildHistoryListeners {//TODO
         @Override
         public void onLocationChanged(Item item, String oldFullName, String newFullName){
             if (item instanceof Job){
-                LOGGER.info("Job renamed from " + oldFullName + " to " + newFullName);
+                LOGGER.finer("Job renamed from " + oldFullName + " to " + newFullName);
                 BuildHistoryFileManager.renameJob(oldFullName, newFullName, AgentBuildHistoryConfig.get().getStorageDir());
             }
         }
@@ -102,7 +102,7 @@ public class AgentBuildHistoryListeners {//TODO
                                 + " Node id: " + node.getId() + " on " + c.getName());
                     }
                 } catch (IOException | InterruptedException e) {
-                    LOGGER.log(Level.FINE, e, () -> "Failed to get FlowNode");
+                    LOGGER.log(Level.WARNING, e, () -> "Failed to get FlowNode");
                 }
             }
         }

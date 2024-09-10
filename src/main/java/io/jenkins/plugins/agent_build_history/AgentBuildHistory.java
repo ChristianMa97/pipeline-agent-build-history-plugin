@@ -40,7 +40,7 @@ public class AgentBuildHistory implements Action {
 
   public AgentBuildHistory(Computer computer) {
     this.computer = computer;
-    LOGGER.log(Level.INFO, () -> "Creating AgentBuildHistory for " + computer.getName());
+    LOGGER.log(Level.CONFIG, () -> "Creating AgentBuildHistory for " + computer.getName());
   }
 
   /*
@@ -65,24 +65,11 @@ public class AgentBuildHistory implements Action {
     return totalPages;
   }
 
-  // Helper method to check if there is existing content in STORAGE_DIR
-  private boolean hasExistingContent() {
-    String storageDir = AgentBuildHistoryConfig.get().getStorageDir();
-    File dir = new File(storageDir);
-    File[] files = dir.listFiles((d, name) -> name.endsWith("_index.txt"));
-    return files != null && files.length > 0;
-  }
-
   @SuppressFBWarnings(value = "ST_WRITE_TO_STATIC_FROM_INSTANCE_METHOD")
   public RunListTable getHandler() {
     if (!loaded) {
-      if (!hasExistingContent()) {
-        loaded = true;
-        Timer.get().schedule(AgentBuildHistory::load, 0, TimeUnit.SECONDS);
-      } else {
-        loaded = true; // Mark as loaded because we found existing content
-        loadingComplete = true;
-      }
+      loaded = true;
+      Timer.get().schedule(AgentBuildHistory::load, 0, TimeUnit.SECONDS);
     }
     RunListTable runListTable = new RunListTable(computer.getName());
     //Get Parameters from URL
@@ -147,7 +134,7 @@ public class AgentBuildHistory implements Action {
         result.add(execution);
       }
     }
-    LOGGER.info("Returning " + result.size() + " entries for node " + nodeName);
+    LOGGER.finer("Returning " + result.size() + " entries for node " + nodeName);
     return result;
   }
 
@@ -161,18 +148,18 @@ public class AgentBuildHistory implements Action {
           LOGGER.warning("Run not found for " + jobName + " #" + buildNumber);
           return null;
       }
-      LOGGER.info("Loading run " + run.getFullDisplayName());
+      LOGGER.finer("Loading run " + run.getFullDisplayName());
       AgentExecution execution = new AgentExecution(run);
 
       if (run instanceof AbstractBuild) {
         Node node = ((AbstractBuild<?, ?>) run).getBuiltOn();
         if (node != null) {
-          LOGGER.config("Loading AbstractBuild on node: " + node.getNodeName());
+          LOGGER.finer("Loading AbstractBuild on node: " + node.getNodeName());
           return execution;
         }
       } else if (run instanceof WorkflowRun) {
         WorkflowRun wfr = (WorkflowRun) run;
-        LOGGER.config("Loading WorkflowRun: " + wfr.getFullDisplayName());
+        LOGGER.finer("Loading WorkflowRun: " + wfr.getFullDisplayName());
         FlowExecution flowExecution = wfr.getExecution();
         if (flowExecution != null) {
           for (FlowNode flowNode : new DepthFirstScanner().allNodes(flowExecution)) {
@@ -185,7 +172,7 @@ public class AgentBuildHistory implements Action {
               if (descriptor instanceof ExecutorStep.DescriptorImpl) {
                 String nodeName = action.getNode();
                 execution.addFlowNode(flowNode, nodeName);
-                LOGGER.config("Loading WorkflowRun FlowNode on node: " + nodeName);
+                LOGGER.finer("Loading WorkflowRun FlowNode on node: " + nodeName);
               }
             }
           }
@@ -195,10 +182,10 @@ public class AgentBuildHistory implements Action {
     }
 
   private static void load() {
-    LOGGER.log(Level.INFO, () -> "Starting to load all runs");
+    LOGGER.log(Level.INFO, () -> "Starting to synchronize all runs");
     RunList<Run<?, ?>> runList = RunList.fromJobs((Iterable) Jenkins.get().allItems(Job.class));
     runList.forEach(run -> {
-      LOGGER.config("Loading run " + run.getFullDisplayName());
+      LOGGER.finer("Loading run " + run.getFullDisplayName());
 
       if (run instanceof AbstractBuild) {
         Node node = ((AbstractBuild<?, ?>) run).getBuiltOn();
@@ -226,7 +213,7 @@ public class AgentBuildHistory implements Action {
       }
     });
     loadingComplete = true;
-    LOGGER.log(Level.INFO, () -> "Loading all runs complete");
+    LOGGER.log(Level.INFO, () -> "Synchronizing all runs complete");
   }
 
   public static void startJobExecution(Computer c, Run<?, ?> run) {
