@@ -16,7 +16,7 @@ import java.util.logging.Logger;
 public class AgentBuildHistoryConfig extends GlobalConfiguration {
     private static final Logger LOGGER = Logger.getLogger(AgentBuildHistoryConfig.class.getName());
 
-    private String storageDir = "/var/jenkins_home/serialized_data";
+    private String storageDir = getDefaultStorageDir();
     private int entriesPerPage = 20;
     private String defaultSortColumn = "startTime";
     private String defaultSortOrder = "desc";
@@ -24,6 +24,16 @@ public class AgentBuildHistoryConfig extends GlobalConfiguration {
     public AgentBuildHistoryConfig() {
         load(); // Load the persisted configuration
         ensureStorageDir();
+    }
+
+    private String getDefaultStorageDir() {
+        String jenkinsHome = System.getenv("JENKINS_HOME");
+        if (jenkinsHome != null && !jenkinsHome.isEmpty()) {
+            return jenkinsHome + File.separator + "serialized_data";
+        } else {
+            LOGGER.warning("JENKINS_HOME environment variable is not set. Falling back to default path.");
+            return "/var/jenkins_home/serialized_data"; // Default fallback if JENKINS_HOME is not set
+        }
     }
 
     private void ensureStorageDir() {
