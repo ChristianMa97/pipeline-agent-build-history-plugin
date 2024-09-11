@@ -29,10 +29,10 @@ public class AgentBuildHistoryConfig extends GlobalConfiguration {
     private String getDefaultStorageDir() {
         String jenkinsHome = System.getenv("JENKINS_HOME");
         if (jenkinsHome != null && !jenkinsHome.isEmpty()) {
-            return jenkinsHome + File.separator + "serialized_data";
+            return jenkinsHome + File.separator + "agent_build_history_serialized_data";
         } else {
             LOGGER.warning("JENKINS_HOME environment variable is not set. Falling back to default path.");
-            return "/var/jenkins_home/serialized_data"; // Default fallback if JENKINS_HOME is not set
+            return "/var/jenkins_home/agent_build_history_serialized_data"; // Default fallback if JENKINS_HOME is not set
         }
     }
 
