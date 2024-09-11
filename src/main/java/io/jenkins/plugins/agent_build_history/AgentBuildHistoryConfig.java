@@ -3,13 +3,9 @@ package io.jenkins.plugins.agent_build_history;
 import hudson.Extension;
 import hudson.util.ListBoxModel;
 import jenkins.model.GlobalConfiguration;
-import jenkins.util.Timer;
 import org.kohsuke.stapler.DataBoundSetter;
 
 import java.io.File;
-import java.util.Set;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 

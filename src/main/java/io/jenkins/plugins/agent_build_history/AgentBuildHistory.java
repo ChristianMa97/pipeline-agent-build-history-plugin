@@ -9,7 +9,6 @@ import hudson.model.Node;
 import hudson.model.Run;
 import hudson.util.RunList;
 
-import java.io.*;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
