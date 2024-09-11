@@ -22,7 +22,7 @@ import java.util.logging.Logger;
 
 @Extension
 @Restricted(NoExternalUse.class)
-public class AgentBuildHistoryListeners {//TODO
+public class AgentBuildHistoryListeners {
     private static final Logger LOGGER = Logger.getLogger(AgentBuildHistoryListeners.class.getName());
 
     @Extension

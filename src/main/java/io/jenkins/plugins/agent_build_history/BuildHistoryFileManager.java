@@ -13,7 +13,7 @@ public class BuildHistoryFileManager {
     private static final Logger LOGGER = Logger.getLogger(BuildHistoryFileManager.class.getName());
 
     // Handle locks for different nodes
-    private static final Map<String, Object> nodeLocks = new HashMap<>();//TODO remove objects when a node is deleted
+    private static final Map<String, Object> nodeLocks = new HashMap<>();
 
     public static Object getNodeLock(String nodeName) {
         synchronized (nodeLocks) {

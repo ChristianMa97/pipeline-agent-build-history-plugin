@@ -10,6 +10,7 @@ import java.io.File;
 import java.util.Set;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 @Extension
@@ -46,8 +47,7 @@ public class AgentBuildHistoryConfig extends GlobalConfiguration {
                     LOGGER.severe("Failed to create storage directory at " + storageDir);
                 }
             } catch (SecurityException e) {
-                LOGGER.severe("Failed to create storage directory at " + storageDir);
-                throw new SecurityException(e); //TODO dont crash the plugin
+                LOGGER.log(Level.SEVERE, "SecurityException: Insufficient permissions to create directory at " + storageDir, e);
             }
         } else {
             LOGGER.info("Storage directory already exists at " + storageDir);
