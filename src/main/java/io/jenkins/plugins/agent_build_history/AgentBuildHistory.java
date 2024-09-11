@@ -81,7 +81,7 @@ public class AgentBuildHistory implements Action {
     int totalEntries = BuildHistoryFileManager.readIndexFile(computer.getName(), AgentBuildHistoryConfig.get().getStorageDir()).size();
     totalPages = (int) Math.ceil((double) totalEntries / pageSize);
 
-    LOGGER.info("Getting runs for node: " + computer.getName() + " page: " + page + " pageSize: " + pageSize + " sortColumn: " + sortColumn + " sortOrder: " + sortOrder);
+    LOGGER.finer("Getting runs for node: " + computer.getName() + " page: " + page + " pageSize: " + pageSize + " sortColumn: " + sortColumn + " sortOrder: " + sortOrder);
 
     int start = (page-1)*pageSize;
     runListTable.setRuns(getExecutionsForNode(computer.getName(), start, pageSize, sortColumn, sortOrder));
@@ -91,7 +91,7 @@ public class AgentBuildHistory implements Action {
   public List<AgentExecution> getExecutionsForNode(String nodeName, int start, int limit, String sortColumn, String sortOrder) {
     String storageDir = AgentBuildHistoryConfig.get().getStorageDir();
     List<String> indexLines = BuildHistoryFileManager.readIndexFile(nodeName, storageDir);
-    LOGGER.info("Found " + indexLines.size() + " entries for node " + nodeName);
+    LOGGER.finer("Found " + indexLines.size() + " entries for node " + nodeName);
     if (indexLines.isEmpty()) {
       return List.of();
     }
@@ -144,7 +144,7 @@ public class AgentBuildHistory implements Action {
         run = job.getBuildByNumber(buildNumber);
       }
       if (run == null) {
-          LOGGER.warning("Run not found for " + jobName + " #" + buildNumber);
+          LOGGER.info("Run not found for " + jobName + " #" + buildNumber);
           return null;
       }
       LOGGER.finer("Loading run " + run.getFullDisplayName());
